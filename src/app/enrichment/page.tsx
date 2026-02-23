@@ -1,18 +1,24 @@
+import { getDashboardStats, getEnrichmentSummary, getCategoryEmailRates } from "@/lib/data";
+
 export default function EnrichmentPage() {
+  const stats = getDashboardStats();
+  const enrichment = getEnrichmentSummary();
+  const categoryRates = getCategoryEmailRates();
+
   return (
     <div className="p-6 max-w-full">
       <div className="mb-6">
         <h1 className="text-xl font-bold flex items-center gap-2">
-          🔍 Enrichissement D&eacute;cideurs
+          {"\u{1F50D}"} Enrichissement Emails
           <span
             className="text-xs font-medium px-2 py-0.5 rounded-full"
-            style={{ background: "rgba(99,102,241,0.15)", color: "var(--accent-light)" }}
+            style={{ background: "rgba(34,197,94,0.15)", color: "#22c55e" }}
           >
-            KSPR + LinkedIn
+            GRATUIT
           </span>
         </h1>
         <p className="text-sm mt-1" style={{ color: "var(--muted)" }}>
-          Pipeline automatique : Entreprise &rarr; LinkedIn &rarr; Top 10 d&eacute;cideurs &rarr; Email pro
+          Scraping web automatique : Site web &rarr; Pages contact &rarr; Extraction emails &rarr; Validation
         </p>
       </div>
 
@@ -21,99 +27,134 @@ export default function EnrichmentPage() {
         className="rounded-xl p-6 mb-6"
         style={{ background: "var(--card)", border: "1px solid var(--border)" }}
       >
-        <h3 className="font-semibold mb-4">🔄 Pipeline d&apos;enrichissement</h3>
+        <h3 className="font-semibold mb-4">{"\u{1F504}"} Pipeline d&apos;enrichissement</h3>
         <div className="flex items-center gap-2 overflow-x-auto pb-2">
           <PipelineStep
             step={1}
-            title="Entreprise scrap&eacute;e"
+            title="Leads scrap&eacute;s"
             desc="Google Maps / Apify"
-            count={204}
+            count={stats.totalLeads}
             color="#6366f1"
           />
           <Arrow />
           <PipelineStep
             step={2}
-            title="LinkedIn Search"
-            desc="Chercher employ&eacute;s"
-            count={0}
+            title="Avec site web"
+            desc="Sites &agrave; scraper"
+            count={stats.withWebsite}
             color="#818cf8"
           />
           <Arrow />
           <PipelineStep
             step={3}
-            title="KSPR Enrichment"
-            desc="Email pro via Kaspr"
-            count={0}
-            color="#f59e0b"
+            title="Email trouv&eacute;"
+            desc="Scraping web gratuit"
+            count={stats.withEmail}
+            color="#22c55e"
           />
           <Arrow />
           <PipelineStep
             step={4}
-            title="D&eacute;cideur qualifi&eacute;"
-            desc="Pret pour Instantly"
-            count={0}
-            color="#22c55e"
+            title="Pr&ecirc;t Instantly"
+            desc="Upload campagne"
+            count={stats.withEmail}
+            color="#f59e0b"
           />
         </div>
       </div>
 
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <StatBox label="Entreprises en attente" value="204" color="#6366f1" icon="🏢" />
-        <StatBox label="Profils LinkedIn trouv&eacute;s" value="0" color="#818cf8" icon="🔗" />
-        <StatBox label="Emails KSPR trouv&eacute;s" value="0" color="#f59e0b" icon="📧" />
-        <StatBox label="D&eacute;cideurs qualifi&eacute;s" value="0" color="#22c55e" icon="🎯" />
+        <StatBox label="Leads total" value={stats.totalLeads.toLocaleString()} color="#6366f1" icon={"\u{1F3E2}"} />
+        <StatBox label="Avec site web" value={stats.withWebsite.toLocaleString()} color="#818cf8" icon={"\u{1F310}"} />
+        <StatBox label="Emails trouv&eacute;s" value={stats.withEmail.toLocaleString()} color="#22c55e" icon={"\u{1F4E7}"} />
+        <StatBox label="Taux enrichissement" value={`${stats.emailRate}%`} color="#f59e0b" icon={"\u{1F4C8}"} />
       </div>
 
-      {/* Decision maker targets */}
+      {/* Method card */}
       <div
         className="rounded-xl p-6 mb-6"
         style={{ background: "var(--card)", border: "1px solid var(--border)" }}
       >
-        <h3 className="font-semibold mb-4">🎯 Profils cibl&eacute;s par verticale</h3>
+        <h3 className="font-semibold mb-4">{"\u{1F6E0}\u{FE0F}"} M&eacute;thode d&apos;enrichissement</h3>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <TargetCard
-            verticale="Formation / &Eacute;ducation"
-            emoji="🎓"
-            targets={["Directeur G\u00e9n\u00e9ral", "Responsable Admissions", "Directeur Commercial", "Responsable P\u00e9dagogique"]}
-          />
-          <TargetCard
-            verticale="Cabinets Dentaires"
-            emoji="🦷"
-            targets={["Chirurgien-Dentiste titulaire", "Directeur de clinique", "Office Manager"]}
-          />
-          <TargetCard
-            verticale="Agences Immobili\u00e8res"
-            emoji="🏠"
-            targets={["Directeur d'agence", "Responsable Commercial", "G\u00e9rant"]}
-          />
-          <TargetCard
-            verticale="Cabinets d'Avocats"
-            emoji="⚖️"
-            targets={["Associ\u00e9 G\u00e9rant", "Managing Partner", "Office Manager"]}
-          />
+          <div className="p-4 rounded-lg" style={{ background: "rgba(34,197,94,0.08)", border: "1px solid rgba(34,197,94,0.2)" }}>
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-lg">{"\u{1F310}"}</span>
+              <span className="text-sm font-bold" style={{ color: "#22c55e" }}>Scraping Web Gratuit</span>
+            </div>
+            <p className="text-xs" style={{ color: "var(--muted)" }}>
+              {enrichment.method}
+            </p>
+            <div className="mt-3 space-y-1">
+              <div className="flex items-center gap-2 text-xs">
+                <span style={{ color: "#22c55e" }}>{"\u2713"}</span>
+                <span style={{ color: "var(--muted)" }}>Visite page d&apos;accueil + /contact + /mentions-legales</span>
+              </div>
+              <div className="flex items-center gap-2 text-xs">
+                <span style={{ color: "#22c55e" }}>{"\u2713"}</span>
+                <span style={{ color: "var(--muted)" }}>Extraction emails par regex avanc&eacute;e</span>
+              </div>
+              <div className="flex items-center gap-2 text-xs">
+                <span style={{ color: "#22c55e" }}>{"\u2713"}</span>
+                <span style={{ color: "var(--muted)" }}>Filtrage noreply@, webmaster@, etc.</span>
+              </div>
+              <div className="flex items-center gap-2 text-xs">
+                <span style={{ color: "#22c55e" }}>{"\u2713"}</span>
+                <span style={{ color: "var(--muted)" }}>Priorisation : direction@ &gt; contact@ &gt; info@</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="p-4 rounded-lg" style={{ background: "var(--background)" }}>
+            <h4 className="text-sm font-medium mb-3">{"\u{1F4B0}"} Co&ucirc;t</h4>
+            <div className="space-y-3">
+              <div className="flex justify-between items-center">
+                <span className="text-xs" style={{ color: "var(--muted)" }}>Scraping web</span>
+                <span className="text-sm font-bold" style={{ color: "#22c55e" }}>0 EUR</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-xs" style={{ color: "var(--muted)" }}>API externe</span>
+                <span className="text-sm font-bold" style={{ color: "#22c55e" }}>0 EUR</span>
+              </div>
+              <div className="flex justify-between items-center pt-2" style={{ borderTop: "1px solid var(--border)" }}>
+                <span className="text-xs font-medium">Total</span>
+                <span className="text-lg font-black" style={{ color: "#22c55e" }}>{enrichment.cost}</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* KSPR API Status */}
+      {/* By category */}
       <div
         className="rounded-xl p-6"
         style={{ background: "var(--card)", border: "1px solid var(--border)" }}
       >
-        <h3 className="font-semibold mb-3">⚡ API KSPR (Kaspr)</h3>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="p-3 rounded-lg" style={{ background: "var(--background)" }}>
-            <p className="text-xs" style={{ color: "var(--muted)" }}>Statut</p>
-            <p className="text-sm font-medium" style={{ color: "#22c55e" }}>Connect&eacute; &#10003;</p>
-          </div>
-          <div className="p-3 rounded-lg" style={{ background: "var(--background)" }}>
-            <p className="text-xs" style={{ color: "var(--muted)" }}>Cr&eacute;dits restants</p>
-            <p className="text-sm font-medium">&#8212;</p>
-          </div>
-          <div className="p-3 rounded-lg" style={{ background: "var(--background)" }}>
-            <p className="text-xs" style={{ color: "var(--muted)" }}>Endpoint</p>
-            <p className="text-xs font-mono" style={{ color: "var(--accent-light)" }}>POST /profile/linkedin</p>
-          </div>
+        <h3 className="font-semibold mb-4">{"\u{1F4CA}"} Enrichissement par cat&eacute;gorie</h3>
+        <div className="space-y-2">
+          {categoryRates.map((cat) => (
+            <div key={cat.name} className="flex items-center gap-3">
+              <span className="text-[11px] w-48 truncate" style={{ color: "var(--muted)" }}>
+                {cat.name}
+              </span>
+              <div className="flex-1 h-4 rounded-full overflow-hidden" style={{ background: "var(--background)" }}>
+                <div
+                  className="h-full rounded-full"
+                  style={{
+                    width: `${Math.max(cat.rate, 1)}%`,
+                    background: cat.rate > 50 ? "#22c55e" : cat.rate > 20 ? "#f59e0b" : "#6366f1",
+                  }}
+                />
+              </div>
+              <span className="text-xs font-bold w-12 text-right" style={{ color: cat.rate > 0 ? "#22c55e" : "var(--muted)" }}>
+                {cat.withEmail}/{cat.total}
+              </span>
+              <span className="text-[10px] w-10 text-right" style={{ color: cat.rate > 50 ? "#22c55e" : cat.rate > 20 ? "#f59e0b" : "var(--muted)" }}>
+                {cat.rate}%
+              </span>
+            </div>
+          ))}
         </div>
       </div>
     </div>
@@ -146,7 +187,7 @@ function PipelineStep({
       </div>
       <p className="text-sm font-medium">{title}</p>
       <p className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>{desc}</p>
-      <p className="text-lg font-bold mt-2" style={{ color }}>{count}</p>
+      <p className="text-lg font-bold mt-2" style={{ color }}>{count.toLocaleString()}</p>
     </div>
   );
 }
@@ -178,35 +219,6 @@ function StatBox({
       <span className="text-2xl">{icon}</span>
       <p className="text-2xl font-bold mt-1" style={{ color }}>{value}</p>
       <p className="text-xs mt-1" style={{ color: "var(--muted)" }}>{label}</p>
-    </div>
-  );
-}
-
-function TargetCard({
-  verticale,
-  emoji,
-  targets,
-}: {
-  verticale: string;
-  emoji: string;
-  targets: string[];
-}) {
-  return (
-    <div className="p-4 rounded-lg" style={{ background: "var(--background)" }}>
-      <h4 className="text-sm font-medium mb-2">
-        {emoji} {verticale}
-      </h4>
-      <div className="flex flex-wrap gap-1.5">
-        {targets.map((t) => (
-          <span
-            key={t}
-            className="text-[11px] px-2 py-1 rounded-full"
-            style={{ background: "rgba(99,102,241,0.1)", color: "var(--accent-light)" }}
-          >
-            {t}
-          </span>
-        ))}
-      </div>
     </div>
   );
 }

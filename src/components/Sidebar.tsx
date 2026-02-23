@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { getDashboardStats } from "@/lib/data";
 
 interface NavItem {
   href: string;
@@ -10,23 +11,24 @@ interface NavItem {
   badge?: string;
 }
 
-const NAV_ITEMS: NavItem[] = [
-  { href: "/", label: "Dashboard", icon: "🚀" },
-  { href: "/launch", label: "Lancer Campagne", icon: "🎯" },
-  { href: "/leads", label: "Leads", icon: "👥", badge: "204" },
-  { href: "/campaigns", label: "Campagnes", icon: "📧" },
-  { href: "/enrichment", label: "Enrichissement", icon: "🔍" },
-  { href: "/verticales", label: "Verticales", icon: "📊" },
-  { href: "/scraping", label: "Scraping", icon: "🕷️" },
-  { href: "/social", label: "Social Media", icon: "📱" },
-];
-
-const BOTTOM_ITEMS: NavItem[] = [
-  { href: "/settings", label: "Settings", icon: "⚙️" },
-];
-
 export function Sidebar() {
   const pathname = usePathname();
+  const stats = getDashboardStats();
+
+  const NAV_ITEMS: NavItem[] = [
+    { href: "/", label: "Dashboard", icon: "\u{1F680}" },
+    { href: "/launch", label: "Lancer Campagne", icon: "\u{1F3AF}" },
+    { href: "/leads", label: "Leads", icon: "\u{1F465}", badge: stats.totalLeads.toLocaleString() },
+    { href: "/campaigns", label: "Campagnes", icon: "\u{1F4E7}", badge: stats.withEmail > 0 ? String(stats.withEmail) : undefined },
+    { href: "/enrichment", label: "Enrichissement", icon: "\u{1F50D}" },
+    { href: "/verticales", label: "Verticales", icon: "\u{1F4CA}", badge: String(Object.keys(stats.byVerticale).length) },
+    { href: "/scraping", label: "Scraping", icon: "\u{1F577}\u{FE0F}" },
+    { href: "/social", label: "Social Media", icon: "\u{1F4F1}" },
+  ];
+
+  const BOTTOM_ITEMS: NavItem[] = [
+    { href: "/settings", label: "Settings", icon: "\u{2699}\u{FE0F}" },
+  ];
 
   return (
     <aside
@@ -119,7 +121,7 @@ export function Sidebar() {
             Pipeline: Autonome
           </p>
           <p className="text-[10px] mt-0.5" style={{ color: "var(--muted)" }}>
-            Scraping + Enrichissement + Upload
+            {stats.totalLeads.toLocaleString()} leads &bull; {stats.withEmail} emails &bull; {stats.emailRate}%
           </p>
         </div>
       </div>
