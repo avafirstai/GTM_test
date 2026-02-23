@@ -1,234 +1,440 @@
 #!/usr/bin/env python3
-"""
-AVA GTM — Dashboard Data Updater
-Updates src/lib/data.ts with real enrichment stats.
-
-Usage:
-    python3 scripts/update_dashboard_data.py
-"""
+"""AVA GTM — Dashboard Data Generator. Reads CSV, generates TypeScript."""
 
 import csv
 import json
-import re
 import time
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
-
-CSV_PATH = Path("scripts/leads-enriched-emails.csv")
-ENRICHMENT_STATS = Path("scripts/enrichment-stats.json")
-UPLOAD_STATS = Path("scripts/upload-stats.json")
-DATA_TS_PATH = Path("src/lib/data.ts")
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+CSV_PATH = PROJECT_ROOT / "scripts" / "leads-enriched-emails.csv"
+DATA_TS_PATH = PROJECT_ROOT / "src" / "lib" / "data.ts"
+LEADS_TS_PATH = PROJECT_ROOT / "src" / "lib" / "leads-data.ts"
+MAX_LEADS_EXPORT = 500
 
 
-def load_csv_stats() -> dict[str, object]:
-    """Load and compute stats from the enriched CSV."""
+def si(v, d=0):
+    try: return int(float(v))
+    except (ValueError, TypeError): return d
+
+def sf(v, d=0.0):
+    try: return float(v)
+    except (ValueError, TypeError): return d
+
+def esc(s):
+    return s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "")
+
+
+def load_csv():
     if not CSV_PATH.exists():
-        return {}
-
-    total = 0
-    with_email = 0
-    with_phone = 0
-    with_website = 0
-    by_city: dict[str, int] = defaultdict(int)
-    by_verticale: dict[str, int] = defaultdict(int)
-    by_verticale_email: dict[str, int] = defaultdict(int)
-    scores: list[int] = []
-
+        print(f"  [ERROR] CSV not found: {CSV_PATH}")
+        return []
+    rows = []
     with open(CSV_PATH, "r", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            total += 1
-            if row.get("best_email", "").strip():
-                with_email += 1
-            if row.get("phone", "").strip():
-                with_phone += 1
-            if row.get("website", "").strip():
-                with_website += 1
-            city = row.get("city", "").strip()
-            if city:
-                by_city[city] += 1
-            category = row.get("category", "Non classé")
-            by_verticale[category] += 1
-            if row.get("best_email", "").strip():
-                by_verticale_email[category] += 1
-            try:
-                scores.append(int(row.get("score", "0")))
-            except ValueError:
-                pass
+        for r in csv.DictReader(f):
+            rows.append(r)
+    print(f"  Loaded {len(rows)} leads from CSV")
+    return rows
 
-    # Top 10 cities
-    top_cities = sorted(by_city.items(), key=lambda x: -x[1])[:10]
-    # Top 10 verticales
-    top_verticales = sorted(by_verticale.items(), key=lambda x: -x[1])[:15]
+
+def compute(rows):
+    total = len(rows)
+    we = wp = ww = 0
+    cats = Counter()
+    cities = Counter()
+    score_h = score_m = score_l = 0
+    scores = []
+    ratings = []
+    total_reviews = 0
+    cat_emails = defaultdict(lambda: {"total": 0, "email": 0})
+    city_emails = defaultdict(lambda: {"total": 0, "email": 0})
+
+    for r in rows:
+        em = (r.get("best_email") or "").strip()
+        ph = (r.get("phone") or "").strip()
+        ws = (r.get("website") or "").strip()
+        cat = (r.get("category") or "Non classe").strip() or "Non classe"
+        city = (r.get("city") or "Autre").strip() or "Autre"
+        sc = si(r.get("score", "0"))
+        rat = sf(r.get("rating", "0"))
+        rev = si(r.get("reviews", "0"))
+
+        if em: we += 1
+        if ph: wp += 1
+        if ws: ww += 1
+        cats[cat] += 1
+        cities[city] += 1
+        scores.append(sc)
+        if sc >= 80: score_h += 1
+        elif sc >= 50: score_m += 1
+        else: score_l += 1
+        if rat > 0: ratings.append(rat)
+        total_reviews += rev
+        cat_emails[cat]["total"] += 1
+        if em: cat_emails[cat]["email"] += 1
+        city_emails[city]["total"] += 1
+        if em: city_emails[city]["email"] += 1
+
+    avg_sc = round(sum(scores) / len(scores), 1) if scores else 0
+    avg_rat = round(sum(ratings) / len(ratings), 1) if ratings else 0
+    er = round(we / total * 100, 1) if total else 0
+    pr = round(wp / total * 100, 1) if total else 0
+    wr = round(ww / total * 100, 1) if total else 0
+
+    top_cats = dict(cats.most_common(20))
+    top_cities = dict(cities.most_common(15))
+
+    cat_rates = []
+    for cat, ct in cats.most_common(20):
+        ce = cat_emails[cat]
+        rate = round(ce["email"] / ce["total"] * 100, 1) if ce["total"] else 0
+        cat_rates.append({"name": cat, "total": ce["total"], "withEmail": ce["email"], "rate": rate})
+
+    city_rates = []
+    for city, ct in cities.most_common(15):
+        ce = city_emails[city]
+        rate = round(ce["email"] / ce["total"] * 100, 1) if ce["total"] else 0
+        city_rates.append({"name": city, "total": ce["total"], "withEmail": ce["email"], "rate": rate})
 
     return {
-        "total": total,
-        "with_email": with_email,
-        "with_phone": with_phone,
-        "with_website": with_website,
-        "email_rate": round(with_email / total * 100, 1) if total > 0 else 0,
-        "phone_rate": round(with_phone / total * 100, 1) if total > 0 else 0,
-        "website_rate": round(with_website / total * 100, 1) if total > 0 else 0,
-        "avg_score": round(sum(scores) / len(scores), 1) if scores else 0,
-        "top_cities": top_cities,
-        "top_verticales": top_verticales,
-        "verticale_email_rates": {
-            v: round(by_verticale_email.get(v, 0) / c * 100, 1) if c > 0 else 0
-            for v, c in top_verticales
-        },
+        "total": total, "withEmail": we, "withoutEmail": total - we,
+        "withPhone": wp, "withWebsite": ww,
+        "highScore": score_h, "mediumScore": score_m, "lowScore": score_l,
+        "avgScore": avg_sc, "avgRating": avg_rat, "totalReviews": total_reviews,
+        "emailRate": er, "phoneRate": pr, "websiteRate": wr,
+        "topCats": top_cats, "topCities": top_cities,
+        "catRates": cat_rates, "cityRates": city_rates,
     }
 
 
-def generate_data_ts(stats: dict[str, object]) -> str:
-    """Generate the data.ts content with real stats."""
-    total = stats.get("total", 8360)
-    with_email = stats.get("with_email", 0)
-    with_phone = stats.get("with_phone", 0)
-    with_website = stats.get("with_website", 0)
-    email_rate = stats.get("email_rate", 0)
-    phone_rate = stats.get("phone_rate", 0)
-    website_rate = stats.get("website_rate", 0)
-    avg_score = stats.get("avg_score", 0)
-    top_cities = stats.get("top_cities", [])
-    top_verticales = stats.get("top_verticales", [])
+def gen_record(d, indent=4):
+    pad = " " * indent
+    lines = [f'{pad}"{esc(k)}": {v},' for k, v in d.items()]
+    return "{\n" + "\n".join(lines) + "\n  }"
 
-    # Load upload stats if available
-    upload_stats: dict[str, object] = {}
-    if UPLOAD_STATS.exists():
-        with open(UPLOAD_STATS, "r") as f:
-            upload_stats = json.load(f)
 
-    uploaded = upload_stats.get("total_uploaded", 0)
-    by_vert_upload = upload_stats.get("by_verticale", {})
-
-    # Pipeline stages
-    pipeline_stages = [
-        {"name": "Google Maps Scraping", "count": total, "status": "completed"},
-        {"name": "Phone Numbers", "count": with_phone, "status": "completed"},
-        {"name": "Website Detection", "count": with_website, "status": "completed"},
-        {"name": "Email Enrichment", "count": with_email, "status": "completed" if with_email > 0 else "in_progress"},
-        {"name": "Instantly Upload", "count": uploaded, "status": "completed" if uploaded > 0 else "pending"},
-        {"name": "Campaign Active", "count": 0, "status": "pending"},
-    ]
-
-    # Verticale data
-    verticale_data = []
-    for name, count in (top_verticales if top_verticales else []):
-        email_count = stats.get("verticale_email_rates", {}).get(name, 0)
-        verticale_data.append({
-            "name": name[:30],
-            "leads": count,
-            "emailRate": email_count,
-        })
-
-    # City data
-    city_data = []
-    for name, count in (top_cities if top_cities else []):
-        city_data.append({"name": name, "leads": count})
-
+def gen_data_ts(s):
     now = time.strftime("%Y-%m-%d %H:%M")
+    cat_items = [f'    {{ name: "{esc(c["name"])}", total: {c["total"]}, withEmail: {c["withEmail"]}, rate: {c["rate"]} }}' for c in s["catRates"]]
+    city_items = [f'    {{ name: "{esc(c["name"])}", total: {c["total"]}, withEmail: {c["withEmail"]}, rate: {c["rate"]} }}' for c in s["cityRates"]]
+    cat_joined = ",\n".join(cat_items)
+    city_joined = ",\n".join(city_items)
 
-    content = f"""// Auto-generated by update_dashboard_data.py — {now}
-// DO NOT EDIT MANUALLY — this file is overwritten by the pipeline
+    return f'''// AUTO-GENERATED by scripts/update_dashboard_data.py -- {now}
+// Source: scripts/leads-enriched-emails.csv ({s["total"]} leads)
+// DO NOT EDIT MANUALLY
 
-export interface Lead {{
-  title: string;
-  phone: string;
-  website: string;
-  email: string;
-  category: string;
-  city: string;
-  rating: number;
-  reviews: number;
-  score: number;
+export interface DashboardStats {{
+  totalLeads: number;
+  withEmail: number;
+  withoutEmail: number;
+  withPhone: number;
+  withWebsite: number;
+  highScore: number;
+  mediumScore: number;
+  lowScore: number;
+  avgScore: number;
+  avgRating: number;
+  totalReviews: number;
+  emailRate: number;
+  phoneRate: number;
+  websiteRate: number;
+  byVerticale: Record<string, number>;
+  byVille: Record<string, number>;
+  bySource: Record<string, number>;
+  byScore: {{ high: number; medium: number; low: number }};
+  lastUpdated: string;
+}}
+
+export interface CategoryRate {{
+  name: string;
+  total: number;
+  withEmail: number;
+  rate: number;
+}}
+
+export interface CityRate {{
+  name: string;
+  total: number;
+  withEmail: number;
+  rate: number;
+}}
+
+export function getDashboardStats(): DashboardStats {{
+  return {{
+    totalLeads: {s["total"]},
+    withEmail: {s["withEmail"]},
+    withoutEmail: {s["withoutEmail"]},
+    withPhone: {s["withPhone"]},
+    withWebsite: {s["withWebsite"]},
+    highScore: {s["highScore"]},
+    mediumScore: {s["mediumScore"]},
+    lowScore: {s["lowScore"]},
+    avgScore: {s["avgScore"]},
+    avgRating: {s["avgRating"]},
+    totalReviews: {s["totalReviews"]},
+    emailRate: {s["emailRate"]},
+    phoneRate: {s["phoneRate"]},
+    websiteRate: {s["websiteRate"]},
+    byVerticale: {gen_record(s["topCats"])},
+    byVille: {gen_record(s["topCities"])},
+    bySource: {{
+      "Google Maps Scraping": {s["total"]},
+    }},
+    byScore: {{
+      high: {s["highScore"]},
+      medium: {s["mediumScore"]},
+      low: {s["lowScore"]},
+    }},
+    lastUpdated: "{now}",
+  }};
+}}
+
+export function getCategoryEmailRates(): CategoryRate[] {{
+  return [
+{cat_joined}
+  ];
+}}
+
+export function getCityEmailRates(): CityRate[] {{
+  return [
+{city_joined}
+  ];
+}}
+
+export interface ApifyRunStatus {{
+  runId: string;
+  datasetId: string;
+  status: string;
+  queriesCount: number;
+  verticale: string;
+  resultsCount?: number;
+}}
+
+export function getApifyRuns(): ApifyRunStatus[] {{
+  return [
+    {{ runId: "WMS8gIAQ5rqzyghf0", datasetId: "1R95ndihhQhYmX7Pv", status: "SUCCEEDED", queriesCount: 30, verticale: "Formation Paris+Lyon", resultsCount: 447 }},
+    {{ runId: "JH3n4GsiBgmTidFfm", datasetId: "d75bTGRX0avyXyzJ8", status: "SUCCEEDED", queriesCount: 50, verticale: "Formation France Batch 1", resultsCount: 579 }},
+    {{ runId: "gLcR1g5PhdOFUwQRw", datasetId: "KVOtVsZexVIpJCvd7", status: "SUCCEEDED", queriesCount: 50, verticale: "Formation + Auto-ecole", resultsCount: 395 }},
+    {{ runId: "BwMU7MRjkqHZpNKL5", datasetId: "fBvNu8dFcJUjiwZAC", status: "SUCCEEDED", queriesCount: 50, verticale: "Multi-verticale Chunk 3", resultsCount: 947 }},
+    {{ runId: "XFD7PTtDDYQdWODxO", datasetId: "KFWY4BoPSH7GwZMig", status: "SUCCEEDED", queriesCount: 50, verticale: "Multi-verticale Chunk 4", resultsCount: 925 }},
+    {{ runId: "mOb8hvAId5vETHbYP", datasetId: "mKkV3YSzTfRSKPqWz", status: "SUCCEEDED", queriesCount: 50, verticale: "Multi-verticale Chunk 5", resultsCount: 912 }},
+    {{ runId: "EBJwkNWs9qnOnDr2H", datasetId: "SlXorLlzSLhf8CfcU", status: "SUCCEEDED", queriesCount: 50, verticale: "Multi-verticale Chunk 6", resultsCount: 921 }},
+    {{ runId: "VvsH1PuPTHa1vnIe7", datasetId: "6vTJdV8EPwbYz8qVR", status: "SUCCEEDED", queriesCount: 50, verticale: "Multi-verticale Chunk 7", resultsCount: 914 }},
+    {{ runId: "si1VpqXtNqdk1JK21", datasetId: "79cWMFzVOeYKTNj76", status: "SUCCEEDED", queriesCount: 50, verticale: "Multi-verticale Chunk 8", resultsCount: 855 }},
+    {{ runId: "UWkYvTtUA3E6OAJde", datasetId: "fB8yPUVaSzNYiw7XB", status: "SUCCEEDED", queriesCount: 50, verticale: "Multi-verticale Chunk 9", resultsCount: 870 }},
+    {{ runId: "bivuRtrsbFZhN2mDs", datasetId: "JHdQYQit3CPoZMfe1", status: "SUCCEEDED", queriesCount: 50, verticale: "Multi-verticale Chunk 10", resultsCount: 852 }},
+  ];
 }}
 
 export interface PipelineStage {{
   name: string;
   count: number;
-  status: 'completed' | 'in_progress' | 'pending';
+  color: string;
 }}
 
-export interface VerticaleData {{
+export function getPipelineStages(): PipelineStage[] {{
+  return [
+    {{ name: "Scrappe", count: {s["total"]}, color: "#6366f1" }},
+    {{ name: "Email Trouve", count: {s["withEmail"]}, color: "#8b5cf6" }},
+    {{ name: "Pret Campagne", count: {s["withEmail"]}, color: "#22c55e" }},
+    {{ name: "Contacte", count: 0, color: "#f59e0b" }},
+    {{ name: "Repondu", count: 0, color: "#06b6d4" }},
+    {{ name: "RDV Booke", count: 0, color: "#10b981" }},
+  ];
+}}
+
+export interface EnrichmentSummary {{
+  method: string;
+  cost: string;
+  successRate: number;
+  totalEmailsFound: number;
+  totalLeadsProcessed: number;
+  timestamp: string;
+}}
+
+export function getEnrichmentSummary(): EnrichmentSummary {{
+  return {{
+    method: "Website scraping (aiohttp + BeautifulSoup)",
+    cost: "0 EUR",
+    successRate: {s["emailRate"]},
+    totalEmailsFound: {s["withEmail"]},
+    totalLeadsProcessed: {s["total"]},
+    timestamp: "{now}",
+  }};
+}}
+'''
+
+
+def gen_leads_ts(rows, total):
+    now = time.strftime("%Y-%m-%d %H:%M")
+    today = time.strftime("%Y-%m-%d")
+    sorted_rows = sorted(rows, key=lambda r: si(r.get("score", "0")), reverse=True)
+    subset = sorted_rows[:MAX_LEADS_EXPORT]
+
+    entries = []
+    for i, r in enumerate(subset):
+        ti = esc((r.get("title") or "").strip())
+        ca = esc((r.get("category") or "Non classe").strip())
+        ci = esc((r.get("city") or "").strip())
+        ad = esc((r.get("address") or "").strip())
+        ph = esc((r.get("phone") or "").strip())
+        em = esc((r.get("best_email") or "").strip())
+        ws = esc((r.get("website") or "").strip())
+        ra = sf(r.get("rating", "0"))
+        rv = si(r.get("reviews", "0"))
+        sc = si(r.get("score", "0"))
+        has_email = bool((r.get("best_email") or "").strip())
+        sp = "contacte" if has_email else "nouveau"
+        ist = "imported" if has_email else "not_imported"
+        est = "completed" if has_email else "pending"
+        entries.append(f'''  {{
+    id: "lead-{i+1:04d}",
+    nom_entreprise: "{ti}",
+    type_etablissement: "{ca}",
+    ville: "{ci}",
+    adresse: "{ad}",
+    telephone: "{ph}",
+    email: "{em}",
+    site_web: "{ws}",
+    note_google: {ra},
+    nb_avis_google: {rv},
+    score: {sc},
+    pitch_angle: "",
+    statut_pipeline: "{sp}",
+    date_scraping: "{today}",
+    source: "Google Maps Scraping",
+    instantly_status: "{ist}",
+    verticale: "{ca}",
+    decision_makers: [],
+    enrichment_status: "{est}",
+  }}''')
+
+    leads_str = ",\n".join(entries)
+    we = sum(1 for r in rows if (r.get("best_email") or "").strip())
+    scs = [si(r.get("score", "0")) for r in subset]
+    avs = round(sum(scs) / len(scs)) if scs else 0
+
+    return f'''// AUTO-GENERATED by scripts/update_dashboard_data.py -- {now}
+// DO NOT EDIT MANUALLY
+// Top {MAX_LEADS_EXPORT} leads by score (of {total} total)
+
+export interface Lead {{
+  id: string;
+  nom_entreprise: string;
+  type_etablissement: string;
+  ville: string;
+  adresse: string;
+  telephone: string;
+  email: string;
+  site_web: string;
+  note_google: number;
+  nb_avis_google: number;
+  score: number;
+  pitch_angle: string;
+  statut_pipeline: "nouveau" | "contacte" | "repondu" | "rdv_booke" | "deal_won" | "perdu";
+  date_scraping: string;
+  source: string;
+  instantly_status: "imported" | "pending" | "not_imported";
+  verticale: string;
+  decision_makers: DecisionMaker[];
+  enrichment_status: "pending" | "in_progress" | "completed" | "failed";
+}}
+
+export interface DecisionMaker {{
   name: string;
-  leads: number;
-  emailRate: number;
+  title: string;
+  email: string;
+  linkedin_url: string;
+  confidence: number;
 }}
 
-export interface CityData {{
-  name: string;
-  leads: number;
+export type SortField = "nom_entreprise" | "ville" | "score" | "note_google" | "nb_avis_google" | "statut_pipeline" | "date_scraping";
+export type SortDirection = "asc" | "desc";
+
+export interface LeadFilters {{
+  search: string;
+  ville: string;
+  verticale: string;
+  pipeline: string;
+  scoreMin: number;
+  scoreMax: number;
+  hasEmail: "all" | "yes" | "no";
+  source: string;
 }}
 
-// ====== STATS (updated by pipeline) ======
+export function getLeads(): Lead[] {{
+  return SAMPLE_LEADS;
+}}
 
-export const dashboardStats = {{
-  totalLeads: {total},
-  withEmail: {with_email},
-  withPhone: {with_phone},
-  withWebsite: {with_website},
-  emailRate: {email_rate},
-  phoneRate: {phone_rate},
-  websiteRate: {website_rate},
-  avgScore: {avg_score},
-  uploadedToInstantly: {uploaded},
-  lastUpdated: "{now}",
-}};
+export function getLeadStats() {{
+  const leads = SAMPLE_LEADS;
+  return {{
+    total: {total},
+    displayed: leads.length,
+    withEmail: {we},
+    withoutEmail: {total - we},
+    avgScore: {avs},
+    byPipeline: {{
+      nouveau: leads.filter((l) => l.statut_pipeline === "nouveau").length,
+      contacte: leads.filter((l) => l.statut_pipeline === "contacte").length,
+      repondu: leads.filter((l) => l.statut_pipeline === "repondu").length,
+      rdv_booke: leads.filter((l) => l.statut_pipeline === "rdv_booke").length,
+      deal_won: leads.filter((l) => l.statut_pipeline === "deal_won").length,
+      perdu: leads.filter((l) => l.statut_pipeline === "perdu").length,
+    }},
+    byVille: leads.reduce<Record<string, number>>((acc, l) => {{
+      acc[l.ville] = (acc[l.ville] || 0) + 1;
+      return acc;
+    }}, {{}}),
+    byVerticale: leads.reduce<Record<string, number>>((acc, l) => {{
+      acc[l.verticale] = (acc[l.verticale] || 0) + 1;
+      return acc;
+    }}, {{}}),
+  }};
+}}
 
-export const pipelineStages: PipelineStage[] = {json.dumps(pipeline_stages, indent=2, ensure_ascii=False)};
-
-export const verticaleData: VerticaleData[] = {json.dumps(verticale_data, indent=2, ensure_ascii=False)};
-
-export const cityData: CityData[] = {json.dumps(city_data, indent=2, ensure_ascii=False)};
-
-// ====== ENRICHMENT SUMMARY ======
-
-export const enrichmentSummary = {{
-  method: "Website scraping (aiohttp + BeautifulSoup)",
-  cost: "0€",
-  pagesScraped: ["/, /contact, /mentions-legales, /a-propos, /about"],
-  successRate: {email_rate},
-  totalEmailsFound: {with_email},
-  totalLeadsProcessed: {total},
-  timestamp: "{now}",
-}};
-"""
-    return content
+const SAMPLE_LEADS: Lead[] = [
+{leads_str}
+];
+'''
 
 
-def main() -> None:
-    """Main update flow."""
+def main():
     print("=" * 60)
-    print("  AVA GTM — DASHBOARD DATA UPDATER")
+    print("  AVA GTM -- Dashboard Data Generator")
     print("=" * 60)
 
-    # Load stats
-    print("[Stats] Loading enrichment data...")
-    stats = load_csv_stats()
+    rows = load_csv()
+    if not rows:
+        print("  No data, aborting.")
+        return
 
-    if not stats:
-        print("[WARN] No enrichment CSV found. Using defaults.")
-        stats = {"total": 8360, "with_email": 0, "with_phone": 8015, "with_website": 7415}
+    print("  Computing statistics...")
+    s = compute(rows)
+    print(f"  Total: {s['total']}")
+    print(f"  With Email: {s['withEmail']} ({s['emailRate']}%)")
+    print(f"  With Phone: {s['withPhone']} ({s['phoneRate']}%)")
+    print(f"  With Website: {s['withWebsite']} ({s['websiteRate']}%)")
+    print(f"  Score: {s['highScore']} high / {s['mediumScore']} med / {s['lowScore']} low")
+    print()
 
-    print(f"  Total leads:     {stats.get('total', 0)}")
-    print(f"  With email:      {stats.get('with_email', 0)} ({stats.get('email_rate', 0)}%)")
-    print(f"  With phone:      {stats.get('with_phone', 0)} ({stats.get('phone_rate', 0)}%)")
-    print(f"  With website:    {stats.get('with_website', 0)} ({stats.get('website_rate', 0)}%)")
-
-    # Generate data.ts
-    print("\n[Generate] Creating src/lib/data.ts...")
-    content = generate_data_ts(stats)
-
-    # Write file
+    print("  Generating data.ts...")
+    data_ts = gen_data_ts(s)
     DATA_TS_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(DATA_TS_PATH, "w", encoding="utf-8") as f:
-        f.write(content)
+        f.write(data_ts)
+    print(f"  Written {len(data_ts)} chars")
 
-    print(f"[Done] Written to {DATA_TS_PATH}")
+    print("  Generating leads-data.ts...")
+    leads_ts = gen_leads_ts(rows, s["total"])
+    with open(LEADS_TS_PATH, "w", encoding="utf-8") as f:
+        f.write(leads_ts)
+    print(f"  Written {len(leads_ts)} chars")
+
+    print()
+    print("  Dashboard data updated!")
     print("=" * 60)
 
 
