@@ -1,10 +1,13 @@
 "use client";
 
-import { getCategoryEmailRates } from "@/lib/data";
-import type { CategoryRate } from "@/lib/data";
+interface CategoryRate {
+  name: string;
+  total: number;
+  withEmail: number;
+  rate: number;
+}
 
-export function EnrichmentProgress() {
-  const rates: CategoryRate[] = getCategoryEmailRates();
+export function EnrichmentProgress({ rates }: { rates: CategoryRate[] }) {
   const colors = [
     "#6366f1", "#818cf8", "#a78bfa", "#c084fc", "#e879f9",
     "#f472b6", "#fb7185", "#f97316", "#fbbf24", "#22c55e",
