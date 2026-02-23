@@ -32,6 +32,14 @@ from bs4 import BeautifulSoup
 
 APIFY_TOKEN = os.environ.get("APIFY_TOKEN", "")
 
+# Supabase (GTM Growth Machine project)
+SUPABASE_URL = "https://cifxffapwtksxhaphepv.supabase.co"
+SUPABASE_ANON_KEY = (
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+    "eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNpZnhmZmFwd3Rrc3hoYXBoZXB2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE4NzQwMDgsImV4cCI6MjA4NzQ1MDAwOH0."
+    "9PYtJudc7oEyxzfklu2TklakMNmvtL3K5OYljrsgytw"
+)
+
 DATASET_IDS = [
     "1R95ndihhQhYmX7Pv", "d75bTGRX0avyXyzJ8", "KVOtVsZexVIpJCvd7",
     "fBvNu8dFcJUjiwZAC", "KFWY4BoPSH7GwZMig", "mKkV3YSzTfRSKPqWz",
@@ -354,6 +362,12 @@ async def enrich_leads(leads: list[Lead], limit: Optional[int] = None) -> list[L
                     to_enrich[idx].emails_found = result
                     to_enrich[idx].best_email = result[0]
                     found += 1
+                    # Live update to Supabase — dashboard sees it in real-time
+                    update_supabase_email(
+                        to_enrich[idx].title,
+                        result[0],
+                        result,
+                    )
                 done += 1
 
             elapsed = time.time() - start
@@ -372,6 +386,34 @@ async def enrich_leads(leads: list[Lead], limit: Optional[int] = None) -> list[L
         lead.score = compute_lead_score(lead)
 
     return leads
+
+
+def update_supabase_email(name: str, email: str, all_emails: list[str]) -> None:
+    """Update a lead's email in Supabase (best-effort, non-blocking)."""
+    try:
+        import urllib.parse
+        # PATCH by name match
+        encoded_name = urllib.parse.quote(name, safe="")
+        url = (
+            f"{SUPABASE_URL}/rest/v1/gtm_leads"
+            f"?name=eq.{encoded_name}"
+        )
+        headers = {
+            "apikey": SUPABASE_ANON_KEY,
+            "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
+            "Content-Type": "application/json",
+            "Prefer": "return=minimal",
+        }
+        import datetime
+        data = json.dumps({
+            "email": email,
+            "email_found_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        }).encode("utf-8")
+        req = urllib.request.Request(url, data=data, headers=headers, method="PATCH")
+        urllib.request.urlopen(req, timeout=5)
+    except Exception:
+        pass  # Best-effort — don't crash the scraper
 
 
 def export_to_csv(leads: list[Lead], output_path: str) -> None:
@@ -508,6 +550,16 @@ def main() -> None:
     stats_path = Path(args.stats)
     stats_path.parent.mkdir(parents=True, exist_ok=True)
     export_stats_json(leads, str(stats_path))
+
+    # Step 4: Final Supabase sync — update scores for all leads with emails
+    with_email = [l for l in leads if l.best_email]
+    if with_email:
+        print(f"\n[Supabase] Syncing {len(with_email)} leads with emails...")
+        synced = 0
+        for lead in with_email:
+            update_supabase_email(lead.title, lead.best_email, lead.emails_found)
+            synced += 1
+        print(f"[Supabase] Done — {synced} leads synced to live dashboard")
 
 
 if __name__ == "__main__":
