@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import { useStats } from "@/lib/useStats";
+import { parseSSEEvents } from "@/lib/parseSSE";
 import {
   Zap,
   Globe,
@@ -31,6 +32,7 @@ import {
   FileText,
   Hash,
   UserCheck,
+  CircleDot,
 } from "lucide-react";
 
 /* ================================================================== */
@@ -52,54 +54,46 @@ interface SourceStat {
   siretFound: number;
 }
 
+interface SourceHealth {
+  name: string;
+  label: string;
+  configured: boolean;
+  tier: string;
+}
+
 interface EnrichResultItem {
   leadId: string;
   bestEmail: string | null;
   bestPhone: string | null;
   dirigeant: string | null;
   siret: string | null;
-  mxProvider: string | null;
-  hasMx: boolean;
-  finalConfidence: number;
+  confidence: number;
   sourcesTried: string[];
-  durationMs: number;
-  sourceResults: Array<{
-    source: string;
-    email: string | null;
-    phone: string | null;
-    dirigeant: string | null;
-    siret: string | null;
-    confidence: number;
-    durationMs: number;
-  }>;
 }
 
-interface EnrichV2Response {
-  success: boolean;
-  processed: number;
-  enriched: number;
-  summary?: {
-    totalEmails: number;
-    totalPhones: number;
-    totalSiret: number;
-    totalDirigeants: number;
-    avgConfidence: number;
-    avgDurationMs: number;
-  };
-  sourceStats?: Record<string, SourceStat>;
-  results?: EnrichResultItem[];
-  error?: string;
-  message?: string;
+interface EnrichSummary {
+  totalEmails: number;
+  totalPhones: number;
+  totalSiret: number;
+  totalDirigeants: number;
+  avgConfidence: number;
+  avgDurationMs: number;
 }
 
-interface EnrichState {
-  running: boolean;
-  target: string;
-  results: EnrichV2Response | null;
+interface EnrichJob {
+  id: string;
+  status: string;
+  progress_processed: number;
+  progress_total: number;
+  progress_enriched: number;
+  summary: EnrichSummary | null;
+  source_stats: Record<string, SourceStat> | null;
   error: string | null;
-  startTime: number | null;
-  elapsedMs: number;
+  created_at: string;
+  completed_at: string | null;
 }
+
+type RunStatus = "idle" | "running" | "done" | "error";
 
 /* ================================================================== */
 /*  Source Configuration                                                */
@@ -112,7 +106,7 @@ const DEFAULT_SOURCES: SourceToggle[] = [
   { name: "sirene", label: "SIRENE / INSEE", tier: "fr_public", description: "Registre officiel FR (SIRET, dirigeant)", enabled: true },
   { name: "email_permutation", label: "Email Permutation", tier: "fr_public", description: "Genere prenom.nom@domain + verification", enabled: true },
   { name: "google_dork", label: "Google Dorking", tier: "freemium", description: "Recherche Google CSE (100/jour gratuit)", enabled: true },
-  { name: "kaspr", label: "Kaspr (LinkedIn)", tier: "premium", description: "Email + tel via LinkedIn (credits)", enabled: false },
+  { name: "kaspr", label: "Kaspr (LinkedIn)", tier: "premium", description: "Email + tel via LinkedIn (illimite)", enabled: false },
 ];
 
 const TIER_CONFIG = {
@@ -142,18 +136,170 @@ export default function EnrichmentPage() {
   const [useKaspr, setUseKaspr] = useState(false);
   const [enrichLimit, setEnrichLimit] = useState(20);
   const [stopOnConfidence, setStopOnConfidence] = useState(80);
-  const [enrichState, setEnrichState] = useState<EnrichState>({
-    running: false,
-    target: "",
-    results: null,
-    error: null,
-    startTime: null,
-    elapsedMs: 0,
-  });
+
+  // Run state
+  const [status, setStatus] = useState<RunStatus>("idle");
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [target, setTarget] = useState("");
+  const [progress, setProgress] = useState({ processed: 0, total: 0, enriched: 0, percent: 0 });
+  const [leadResults, setLeadResults] = useState<EnrichResultItem[]>([]);
+  const [summary, setSummary] = useState<EnrichSummary | null>(null);
+  const [sourceStats, setSourceStats] = useState<Record<string, SourceStat> | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [elapsedMs, setElapsedMs] = useState(0);
+
+  // Source health
+  const [sourceHealth, setSourceHealth] = useState<SourceHealth[]>([]);
+
+  // UI toggles
   const [showAllCategories, setShowAllCategories] = useState(false);
   const [showAllCities, setShowAllCities] = useState(false);
   const [showSourceDetail, setShowSourceDetail] = useState(false);
+
+  // Refs for cleanup
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  /* ---------------------------------------------------------------- */
+  /*  Cleanup on unmount                                               */
+  /* ---------------------------------------------------------------- */
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (abortRef.current) abortRef.current.abort();
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, []);
+
+  /* ---------------------------------------------------------------- */
+  /*  On mount: check source health + resume running job               */
+  /* ---------------------------------------------------------------- */
+
+  useEffect(() => {
+    // Source health
+    fetch("/api/enrich/sources")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.success) setSourceHealth(d.sources);
+      })
+      .catch(() => {});
+
+    // Check for a running job to resume
+    fetch("/api/enrich/jobs?status=running&limit=1")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.success && d.jobs.length > 0) {
+          const runningJob = d.jobs[0] as EnrichJob;
+          setJobId(runningJob.id);
+          setStatus("running");
+          setTarget("Reprise en cours...");
+          setProgress({
+            processed: runningJob.progress_processed,
+            total: runningJob.progress_total,
+            enriched: runningJob.progress_enriched,
+            percent: runningJob.progress_total > 0
+              ? Math.round((runningJob.progress_processed / runningJob.progress_total) * 100)
+              : 0,
+          });
+          // Start polling this job
+          startPolling(runningJob.id);
+        } else {
+          // Check last completed job for display
+          fetch("/api/enrich/jobs?status=completed&limit=1")
+            .then((r) => r.json())
+            .then((d) => {
+              if (d.success && d.jobs.length > 0) {
+                const lastJob = d.jobs[0] as EnrichJob;
+                restoreFromJob(lastJob);
+              }
+            })
+            .catch(() => {});
+        }
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /* ---------------------------------------------------------------- */
+  /*  Restore state from a completed job                               */
+  /* ---------------------------------------------------------------- */
+
+  function restoreFromJob(job: EnrichJob) {
+    setJobId(job.id);
+    setStatus("done");
+    setProgress({
+      processed: job.progress_processed,
+      total: job.progress_total,
+      enriched: job.progress_enriched,
+      percent: 100,
+    });
+    if (job.summary) setSummary(job.summary);
+    if (job.source_stats) setSourceStats(job.source_stats);
+  }
+
+  /* ---------------------------------------------------------------- */
+  /*  Polling fallback (when SSE disconnects or on page resume)        */
+  /* ---------------------------------------------------------------- */
+
+  function startPolling(id: string) {
+    if (pollRef.current) clearInterval(pollRef.current);
+
+    pollRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/enrich/jobs/${id}`);
+        const d = await res.json();
+        if (!d.success) return;
+
+        const job = d.job as EnrichJob;
+        setProgress({
+          processed: job.progress_processed,
+          total: job.progress_total,
+          enriched: job.progress_enriched,
+          percent: job.progress_total > 0
+            ? Math.round((job.progress_processed / job.progress_total) * 100)
+            : 0,
+        });
+
+        if (job.status === "completed") {
+          if (pollRef.current) clearInterval(pollRef.current);
+          restoreFromJob(job);
+          stopTimer();
+        } else if (job.status === "failed") {
+          if (pollRef.current) clearInterval(pollRef.current);
+          setStatus("error");
+          setErrorMsg(job.error || "Erreur inconnue");
+          stopTimer();
+        }
+      } catch {
+        // Silently retry next interval
+      }
+    }, 3000);
+  }
+
+  /* ---------------------------------------------------------------- */
+  /*  Timer                                                            */
+  /* ---------------------------------------------------------------- */
+
+  const startTimer = useCallback(() => {
+    const start = Date.now();
+    setElapsedMs(0);
+    timerRef.current = setInterval(() => {
+      setElapsedMs(Date.now() - start);
+    }, 200);
+  }, []);
+
+  const stopTimer = useCallback(() => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
+
+  /* ---------------------------------------------------------------- */
+  /*  Toggle handlers                                                  */
+  /* ---------------------------------------------------------------- */
 
   const toggleSource = useCallback((name: string) => {
     setSources((prev) =>
@@ -171,30 +317,34 @@ export default function EnrichmentPage() {
     });
   }, []);
 
-  const startTimer = useCallback(() => {
-    const start = Date.now();
-    setEnrichState((prev) => ({ ...prev, startTime: start, elapsedMs: 0 }));
-    timerRef.current = setInterval(() => {
-      setEnrichState((prev) => ({ ...prev, elapsedMs: Date.now() - start }));
-    }, 200);
-  }, []);
+  /* ---------------------------------------------------------------- */
+  /*  Run enrichment via SSE stream                                    */
+  /* ---------------------------------------------------------------- */
 
-  const stopTimer = useCallback(() => {
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-  }, []);
-
-  const runEnrichV2 = useCallback(
+  const runEnrich = useCallback(
     async (opts: { category?: string; city?: string; label: string }) => {
-      setEnrichState({ running: true, target: opts.label, results: null, error: null, startTime: null, elapsedMs: 0 });
+      // Reset state
+      setStatus("running");
+      setTarget(opts.label);
+      setProgress({ processed: 0, total: 0, enriched: 0, percent: 0 });
+      setLeadResults([]);
+      setSummary(null);
+      setSourceStats(null);
+      setErrorMsg(null);
+      setJobId(null);
       startTimer();
+
+      // Abort previous stream if any
+      if (abortRef.current) abortRef.current.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+
       try {
         const enabledSources = sources.filter((s) => s.enabled).map((s) => s.name);
-        const res = await fetch("/api/enrich/v2", {
+        const res = await fetch("/api/enrich/v2/stream", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
           body: JSON.stringify({
             category: opts.category,
             city: opts.city,
@@ -202,35 +352,95 @@ export default function EnrichmentPage() {
             sources: enabledSources,
             stopOnConfidence,
             useKaspr,
-            minScoreForPaid: 30,
+            minScoreForPaid: 0, // Kaspr for all leads (unlimited plan)
           }),
         });
-        const responseData: EnrichV2Response = await res.json();
-        stopTimer();
-        if (responseData.success) {
-          setEnrichState((prev) => ({
-            ...prev,
-            running: false,
-            results: responseData,
-          }));
-        } else {
-          setEnrichState((prev) => ({
-            ...prev,
-            running: false,
-            error: responseData.error || "Erreur inconnue",
-          }));
+
+        if (!res.ok || !res.body) {
+          // Fallback: non-streaming response
+          const data = await res.json();
+          stopTimer();
+          if (data.success && data.processed === 0) {
+            setStatus("done");
+            setSummary(null);
+            setProgress({ processed: 0, total: 0, enriched: 0, percent: 100 });
+            return;
+          }
+          setStatus("error");
+          setErrorMsg(data.error || `HTTP ${res.status}`);
+          return;
         }
-      } catch {
+
+        // Read SSE stream
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          buffer = parseSSEEvents(buffer, (eventType, eventData) => {
+            try {
+              const data = JSON.parse(eventData);
+
+              if (eventType === "job_created") {
+                setJobId(data.jobId as string);
+              } else if (eventType === "progress") {
+                setProgress({
+                  processed: data.processed as number,
+                  total: data.total as number,
+                  enriched: data.enriched as number,
+                  percent: data.percent as number,
+                });
+              } else if (eventType === "lead_result") {
+                setLeadResults((prev) => [...prev, data as EnrichResultItem]);
+              } else if (eventType === "done") {
+                stopTimer();
+                setStatus("done");
+                setSummary(data.summary as EnrichSummary);
+                setSourceStats(data.sourceStats as Record<string, SourceStat>);
+                setProgress((prev) => ({ ...prev, percent: 100 }));
+              } else if (eventType === "error") {
+                stopTimer();
+                setStatus("error");
+                setErrorMsg((data as { message: string }).message);
+              }
+            } catch {
+              // Skip malformed events
+            }
+          });
+        }
+
+        // If stream ended without a "done" event, start polling as fallback
+        if (status === "running" && jobId) {
+          startPolling(jobId);
+        }
+      } catch (err) {
+        if ((err as Error).name === "AbortError") return;
         stopTimer();
-        setEnrichState((prev) => ({ ...prev, running: false, error: "Erreur reseau" }));
+
+        // If we have a jobId, start polling (server may still be processing)
+        if (jobId) {
+          startPolling(jobId);
+        } else {
+          setStatus("error");
+          setErrorMsg("Connexion perdue");
+        }
       }
     },
-    [sources, enrichLimit, stopOnConfidence, useKaspr, startTimer, stopTimer]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sources, enrichLimit, stopOnConfidence, useKaspr, startTimer, stopTimer],
   );
 
   const runEnrichAll = useCallback(() => {
-    runEnrichV2({ label: "Tous les leads sans email" });
-  }, [runEnrichV2]);
+    runEnrich({ label: "Tous les leads sans email" });
+  }, [runEnrich]);
+
+  /* ---------------------------------------------------------------- */
+  /*  Loading state                                                    */
+  /* ---------------------------------------------------------------- */
 
   if (loading || !data) {
     return (
@@ -252,6 +462,12 @@ export default function EnrichmentPage() {
   const enabledCount = sources.filter((s) => s.enabled).length;
   const tiers = ["free", "fr_public", "freemium", "premium"] as const;
 
+  // Helper to check source health
+  function isSourceConfigured(name: string): boolean | null {
+    const health = sourceHealth.find((s) => s.name === name);
+    return health ? health.configured : null;
+  }
+
   return (
     <div className="p-8 max-w-6xl mx-auto">
       {/* Header */}
@@ -259,7 +475,7 @@ export default function EnrichmentPage() {
         <div className="flex items-center gap-3 mb-1">
           <h1 className="text-xl font-semibold tracking-tight">Enrichissement Waterfall v2</h1>
           <span className="text-[10px] font-medium px-2 py-0.5 rounded-full" style={{ background: "rgba(168,85,247,0.1)", color: "#a855f7" }}>
-            8 sources
+            7 sources
           </span>
         </div>
         <p className="text-sm" style={{ color: "var(--text-muted)" }}>
@@ -287,6 +503,8 @@ export default function EnrichmentPage() {
                 <option value={20}>20 leads</option>
                 <option value={50}>50 leads</option>
                 <option value={100}>100 leads</option>
+                <option value={200}>200 leads</option>
+                <option value={500}>500 leads</option>
               </select>
             </div>
             <div className="flex items-center gap-2">
@@ -324,44 +542,55 @@ export default function EnrichmentPage() {
                     </span>
                   </div>
                   <div className="space-y-2">
-                    {tierSources.map((src) => (
-                      <div key={src.name} className="flex items-start gap-2">
-                        <button
-                          type="button"
-                          onClick={() => src.name === "kaspr" ? toggleKaspr() : toggleSource(src.name)}
-                          className="mt-0.5 shrink-0"
-                        >
-                          {src.enabled ? (
-                            <ToggleRight size={18} style={{ color: cfg.color }} />
-                          ) : (
-                            <ToggleLeft size={18} style={{ color: "var(--text-muted)" }} />
-                          )}
-                        </button>
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <span style={{ color: src.enabled ? cfg.color : "var(--text-muted)" }}>
-                              {SOURCE_ICONS[src.name]}
-                            </span>
-                            <span
-                              className="text-[11px] font-medium truncate"
-                              style={{ color: src.enabled ? "var(--text-primary)" : "var(--text-muted)" }}
-                            >
-                              {src.label}
-                            </span>
+                    {tierSources.map((src) => {
+                      const configured = isSourceConfigured(src.name);
+                      return (
+                        <div key={src.name} className="flex items-start gap-2">
+                          <button
+                            type="button"
+                            onClick={() => src.name === "kaspr" ? toggleKaspr() : toggleSource(src.name)}
+                            className="mt-0.5 shrink-0"
+                          >
+                            {src.enabled ? (
+                              <ToggleRight size={18} style={{ color: cfg.color }} />
+                            ) : (
+                              <ToggleLeft size={18} style={{ color: "var(--text-muted)" }} />
+                            )}
+                          </button>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span style={{ color: src.enabled ? cfg.color : "var(--text-muted)" }}>
+                                {SOURCE_ICONS[src.name]}
+                              </span>
+                              <span
+                                className="text-[11px] font-medium truncate"
+                                style={{ color: src.enabled ? "var(--text-primary)" : "var(--text-muted)" }}
+                              >
+                                {src.label}
+                              </span>
+                              {configured !== null && (
+                                <span title={configured ? "API configuree" : "Cle API manquante"}>
+                                  <CircleDot
+                                    size={8}
+                                    style={{ color: configured ? "#22c55e" : "#ef4444" }}
+                                  />
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[9px] mt-0.5" style={{ color: "var(--text-muted)" }}>
+                              {src.description}
+                            </p>
                           </div>
-                          <p className="text-[9px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-                            {src.description}
-                          </p>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               );
             })}
           </div>
 
-          {/* Kaspr Warning */}
+          {/* Kaspr Info */}
           {useKaspr && (
             <div
               className="mt-4 px-4 py-3 rounded-lg flex items-start gap-2.5"
@@ -370,11 +599,11 @@ export default function EnrichmentPage() {
               <AlertTriangle size={14} className="mt-0.5 shrink-0" style={{ color: "#a855f7" }} />
               <div>
                 <p className="text-[11px] font-medium" style={{ color: "#a855f7" }}>
-                  Kaspr consomme des credits
+                  Kaspr active (emails illimites)
                 </p>
                 <p className="text-[10px] mt-0.5" style={{ color: "var(--text-muted)" }}>
-                  Kaspr sera utilise uniquement en dernier recours, pour les leads sans email apres les sources gratuites.
-                  1 credit par donnee trouvee (email, telephone).
+                  Kaspr sera utilise en dernier recours, pour les leads sans email apres les sources gratuites.
+                  Necessite un profil LinkedIn du dirigeant (trouve par les sources precedentes).
                 </p>
               </div>
             </div>
@@ -387,23 +616,23 @@ export default function EnrichmentPage() {
             </div>
             <button
               onClick={runEnrichAll}
-              disabled={enrichState.running || enabledCount === 0}
+              disabled={status === "running" || enabledCount === 0}
               className="flex items-center gap-2 px-5 py-2.5 rounded-lg font-medium text-sm transition-all disabled:opacity-50"
               style={{ background: "var(--accent)", color: "white" }}
             >
-              {enrichState.running ? (
+              {status === "running" ? (
                 <Loader2 size={14} className="animate-spin" />
               ) : (
                 <Play size={14} />
               )}
-              {enrichState.running ? "Enrichissement en cours..." : "Lancer l'enrichissement"}
+              {status === "running" ? "Enrichissement en cours..." : "Lancer l'enrichissement"}
             </button>
           </div>
         </div>
       </div>
 
-      {/* Running Indicator */}
-      {enrichState.running && (
+      {/* Running Indicator with REAL progress */}
+      {status === "running" && (
         <div
           className="rounded-xl border border-[var(--border)] mb-6 p-5"
           style={{ background: "var(--bg-raised)" }}
@@ -412,28 +641,46 @@ export default function EnrichmentPage() {
             <Loader2 size={16} className="animate-spin" style={{ color: "var(--accent)" }} />
             <span className="text-sm font-medium">Enrichissement en cours...</span>
             <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-              {enrichState.target}
+              {target}
             </span>
           </div>
           <div className="flex items-center gap-4 text-[11px]" style={{ color: "var(--text-muted)" }}>
             <span className="flex items-center gap-1">
-              <Clock size={11} /> {(enrichState.elapsedMs / 1000).toFixed(1)}s
+              <Clock size={11} /> {(elapsedMs / 1000).toFixed(1)}s
             </span>
-            <span>{enabledCount} sources actives</span>
-            <span>Limite: {enrichLimit} leads</span>
+            <span>{progress.processed}/{progress.total} traites</span>
+            <span>{progress.enriched} enrichis</span>
+            <span>{progress.percent}%</span>
           </div>
-          {/* Pulsing progress bar */}
-          <div className="mt-3 h-1 rounded-full overflow-hidden" style={{ background: "var(--bg)" }}>
+          {/* Real progress bar */}
+          <div className="mt-3 h-1.5 rounded-full overflow-hidden" style={{ background: "var(--bg)" }}>
             <div
-              className="h-full rounded-full animate-pulse"
-              style={{ background: "var(--accent)", width: "60%", transition: "width 0.5s ease" }}
+              className="h-full rounded-full transition-all duration-500 ease-out"
+              style={{
+                background: "var(--accent)",
+                width: `${Math.max(progress.percent, progress.total > 0 ? 2 : 0)}%`,
+              }}
             />
           </div>
+          {/* Live lead results feed */}
+          {leadResults.length > 0 && (
+            <div className="mt-3 max-h-32 overflow-y-auto space-y-1">
+              {leadResults.slice(-5).map((r) => (
+                <div key={r.leadId} className="text-[10px] flex items-center gap-2" style={{ color: "var(--text-muted)" }}>
+                  <span className="font-mono">{r.leadId.slice(0, 8)}</span>
+                  {r.bestEmail && <span style={{ color: "#22c55e" }}>{r.bestEmail}</span>}
+                  {r.bestPhone && <span style={{ color: "#3b82f6" }}>{r.bestPhone}</span>}
+                  {!r.bestEmail && !r.bestPhone && <span>aucun resultat</span>}
+                  <span className="ml-auto">{r.confidence}%</span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
       {/* Results Banner */}
-      {enrichState.results && !enrichState.running && (
+      {status === "done" && summary && (
         <div className="rounded-xl border border-[var(--border)] mb-6" style={{ background: "var(--bg-raised)" }}>
           {/* Summary Header */}
           <div className="p-5 border-b border-[var(--border)]">
@@ -443,55 +690,53 @@ export default function EnrichmentPage() {
                 Enrichissement termine
               </span>
               <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-                {enrichState.results.processed} traites &middot; {enrichState.results.enriched} enrichis
-                {enrichState.results.summary && ` &middot; ${(enrichState.results.summary.avgDurationMs / 1000).toFixed(1)}s en moyenne`}
+                {progress.processed} traites &middot; {progress.enriched} enrichis
+                {summary.avgDurationMs > 0 && ` \u00b7 ${(summary.avgDurationMs / 1000).toFixed(1)}s en moyenne`}
               </span>
             </div>
 
             {/* Stats Cards */}
-            {enrichState.results.summary && (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <StatCard
-                  icon={<Mail size={14} />}
-                  label="Emails trouves"
-                  value={enrichState.results.summary.totalEmails}
-                  total={enrichState.results.processed}
-                  color="#22c55e"
-                />
-                <StatCard
-                  icon={<Phone size={14} />}
-                  label="Telephones"
-                  value={enrichState.results.summary.totalPhones}
-                  total={enrichState.results.processed}
-                  color="#3b82f6"
-                />
-                <StatCard
-                  icon={<Hash size={14} />}
-                  label="SIRET"
-                  value={enrichState.results.summary.totalSiret}
-                  total={enrichState.results.processed}
-                  color="#f59e0b"
-                />
-                <StatCard
-                  icon={<UserCheck size={14} />}
-                  label="Dirigeants"
-                  value={enrichState.results.summary.totalDirigeants}
-                  total={enrichState.results.processed}
-                  color="#a855f7"
-                />
-              </div>
-            )}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <StatCard
+                icon={<Mail size={14} />}
+                label="Emails trouves"
+                value={summary.totalEmails}
+                total={progress.processed}
+                color="#22c55e"
+              />
+              <StatCard
+                icon={<Phone size={14} />}
+                label="Telephones"
+                value={summary.totalPhones}
+                total={progress.processed}
+                color="#3b82f6"
+              />
+              <StatCard
+                icon={<Hash size={14} />}
+                label="SIRET"
+                value={summary.totalSiret}
+                total={progress.processed}
+                color="#f59e0b"
+              />
+              <StatCard
+                icon={<UserCheck size={14} />}
+                label="Dirigeants"
+                value={summary.totalDirigeants}
+                total={progress.processed}
+                color="#a855f7"
+              />
+            </div>
           </div>
 
           {/* Source Stats */}
-          {enrichState.results.sourceStats && (
+          {sourceStats && (
             <div className="p-5 border-b border-[var(--border)]">
               <h3 className="text-xs font-medium mb-3 flex items-center gap-2">
                 <TrendingUp size={13} style={{ color: "var(--text-muted)" }} />
                 Performance par source
               </h3>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                {Object.entries(enrichState.results.sourceStats).map(([name, stat]) => {
+                {Object.entries(sourceStats).map(([name, stat]) => {
                   const srcConfig = sources.find((s) => s.name === name);
                   const tierCfg = srcConfig ? TIER_CONFIG[srcConfig.tier] : TIER_CONFIG.free;
                   return (
@@ -531,7 +776,7 @@ export default function EnrichmentPage() {
           )}
 
           {/* Detailed results toggle */}
-          {enrichState.results.results && enrichState.results.results.length > 0 && (
+          {leadResults.length > 0 && (
             <div className="p-5">
               <button
                 type="button"
@@ -540,7 +785,7 @@ export default function EnrichmentPage() {
                 style={{ color: "var(--accent-hover)" }}
               >
                 <FileText size={12} />
-                {showSourceDetail ? "Masquer" : "Voir"} les details par lead ({enrichState.results.results.length})
+                {showSourceDetail ? "Masquer" : "Voir"} les details par lead ({leadResults.length})
                 <ChevronDown
                   size={12}
                   style={{ transform: showSourceDetail ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}
@@ -549,7 +794,7 @@ export default function EnrichmentPage() {
 
               {showSourceDetail && (
                 <div className="space-y-2 max-h-[400px] overflow-y-auto">
-                  {enrichState.results.results.map((r) => (
+                  {leadResults.map((r) => (
                     <div
                       key={r.leadId}
                       className="rounded-lg px-3 py-2.5 text-[11px]"
@@ -583,34 +828,23 @@ export default function EnrichmentPage() {
                           <span
                             className="font-medium"
                             style={{
-                              color: r.finalConfidence >= 80 ? "var(--green)" : r.finalConfidence >= 50 ? "#f59e0b" : "var(--text-muted)",
+                              color: r.confidence >= 80 ? "var(--green)" : r.confidence >= 50 ? "#f59e0b" : "var(--text-muted)",
                             }}
                           >
-                            {r.finalConfidence}%
+                            {r.confidence}%
                           </span>
-                          <span>{(r.durationMs / 1000).toFixed(1)}s</span>
                         </span>
                       </div>
                       <div className="flex gap-1 flex-wrap">
-                        {r.sourcesTried.map((s) => {
-                          const srcResult = r.sourceResults.find((sr) => sr.source === s);
-                          const found = srcResult && (srcResult.email || srcResult.phone || srcResult.siret || srcResult.dirigeant);
-                          return (
-                            <span
-                              key={s}
-                              className="text-[9px] px-1.5 py-0.5 rounded"
-                              style={{
-                                background: found ? "rgba(34,197,94,0.1)" : "var(--bg-hover)",
-                                color: found ? "var(--green)" : "var(--text-muted)",
-                              }}
-                            >
-                              {s}
-                              {srcResult?.email && " (email)"}
-                              {srcResult?.phone && " (tel)"}
-                              {srcResult?.siret && " (siret)"}
-                            </span>
-                          );
-                        })}
+                        {r.sourcesTried.map((s) => (
+                          <span
+                            key={s}
+                            className="text-[9px] px-1.5 py-0.5 rounded"
+                            style={{ background: "var(--bg-hover)", color: "var(--text-muted)" }}
+                          >
+                            {s}
+                          </span>
+                        ))}
                       </div>
                     </div>
                   ))}
@@ -621,14 +855,27 @@ export default function EnrichmentPage() {
         </div>
       )}
 
+      {/* Done but no results */}
+      {status === "done" && !summary && (
+        <div
+          className="rounded-xl mb-6 px-5 py-4 flex items-center gap-3"
+          style={{ background: "rgba(34,197,94,0.05)", border: "1px solid rgba(34,197,94,0.2)" }}
+        >
+          <CheckCircle size={16} style={{ color: "var(--green)" }} />
+          <span className="text-sm" style={{ color: "var(--green)" }}>
+            Aucun lead a enrichir (tous ont deja un email ou pas de site web)
+          </span>
+        </div>
+      )}
+
       {/* Error Banner */}
-      {enrichState.error && !enrichState.running && (
+      {status === "error" && (
         <div
           className="rounded-xl mb-6 px-5 py-4 flex items-center gap-3"
           style={{ background: "var(--red-subtle)", border: "1px solid rgba(239,68,68,0.2)" }}
         >
           <AlertTriangle size={16} style={{ color: "var(--red)" }} />
-          <span className="text-sm" style={{ color: "var(--red)" }}>{enrichState.error}</span>
+          <span className="text-sm" style={{ color: "var(--red)" }}>{errorMsg || "Erreur inconnue"}</span>
         </div>
       )}
 
@@ -679,8 +926,8 @@ export default function EnrichmentPage() {
                   total={cat.total}
                   rate={cat.rate}
                   href={`/leads?verticale=${encodeURIComponent(cat.name)}`}
-                  onEnrich={() => runEnrichV2({ category: cat.name, label: cat.name })}
-                  enriching={enrichState.running && enrichState.target === cat.name}
+                  onEnrich={() => runEnrich({ category: cat.name, label: cat.name })}
+                  enriching={status === "running" && target === cat.name}
                   hasUnenriched={cat.total - cat.withEmail > 0}
                 />
               ))}
@@ -727,8 +974,8 @@ export default function EnrichmentPage() {
                   total={city.total}
                   rate={city.rate}
                   href={`/leads?ville=${encodeURIComponent(city.name)}`}
-                  onEnrich={() => runEnrichV2({ city: city.name, label: city.name })}
-                  enriching={enrichState.running && enrichState.target === city.name}
+                  onEnrich={() => runEnrich({ city: city.name, label: city.name })}
+                  enriching={status === "running" && target === city.name}
                   hasUnenriched={city.total - city.withEmail > 0}
                 />
               ))}
@@ -760,7 +1007,7 @@ export default function EnrichmentPage() {
 
       {/* Footer */}
       <p className="text-center text-xs mt-10" style={{ color: "var(--text-muted)" }}>
-        AVA GTM &middot; Waterfall Enrichment Engine v2 &middot; 8 sources
+        AVA GTM &middot; Waterfall Enrichment Engine v2 &middot; 7 sources
       </p>
     </div>
   );

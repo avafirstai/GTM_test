@@ -155,14 +155,13 @@ export const DEFAULT_SOURCES: EnrichmentSource[] = [
   { name: "sirene",             priority: 4, enabled: true,  tier: "fr_public" },
   { name: "email_permutation",  priority: 5, enabled: true,  tier: "fr_public" },
   { name: "google_dork",        priority: 6, enabled: false, tier: "freemium" }, // Off by default (100/day limit)
-  { name: "apollo",             priority: 7, enabled: true,  tier: "freemium" },
-  { name: "kaspr",              priority: 8, enabled: false, tier: "paid" },     // Opt-in only
+  { name: "kaspr",              priority: 7, enabled: false, tier: "paid" },     // Opt-in only
 ];
 
 export const DEFAULT_WATERFALL_CONFIG: WaterfallConfig = {
   sources: DEFAULT_SOURCES,
   stopOnConfidence: 80,
-  maxSources: 8,
+  maxSources: 7,
   timeoutPerSource: 10_000,
   useKaspr: false,
   minScoreForPaid: 30,

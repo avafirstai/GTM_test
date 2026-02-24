@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { VERTICALES as CANONICAL_VERTICALES, VILLES_FRANCE } from "@/lib/verticales";
 import { useCampaigns } from "@/lib/useCampaigns";
 import { useStats } from "@/lib/useStats";
+import { parseSSEEvents } from "@/lib/parseSSE";
 import {
   Rocket,
   ChevronRight,
@@ -139,25 +140,6 @@ export default function LaunchPage() {
   useEffect(() => {
     return () => { abortController?.abort(); };
   }, [abortController]);
-
-  function parseSSEEvents(
-    buffer: string,
-    onEvent: (event: string, data: string) => void,
-  ): string {
-    const parts = buffer.split("\n\n");
-    const remaining = parts.pop() || "";
-    for (const block of parts) {
-      if (!block.trim()) continue;
-      let eventType = "";
-      let eventData = "";
-      for (const line of block.split("\n")) {
-        if (line.startsWith("event: ")) eventType = line.slice(7).trim();
-        else if (line.startsWith("data: ")) eventData = line.slice(6);
-      }
-      if (eventType && eventData) onEvent(eventType, eventData);
-    }
-    return remaining;
-  }
 
   const handleLaunch = useCallback(async () => {
     if (!effectiveVille && !effectiveNiche) return;

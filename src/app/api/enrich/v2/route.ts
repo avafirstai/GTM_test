@@ -51,7 +51,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const limit = Math.min(Math.max(body.limit ?? 20, 1), 100);
+  const limit = Math.min(Math.max(body.limit ?? 20, 1), 500);
 
   // Build waterfall config
   const config: WaterfallConfig = {

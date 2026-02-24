@@ -203,7 +203,8 @@ export async function runWaterfall(
     // --- Guard: Kaspr opt-in check ---
     if (source.name === "kaspr") {
       if (!config.useKaspr) continue;
-      if ((lead.score ?? 0) < config.minScoreForPaid) continue;
+      // Only filter by score if minScoreForPaid > 0 (0 = use for all leads)
+      if (config.minScoreForPaid > 0 && (lead.score ?? 0) < config.minScoreForPaid) continue;
       // Need a LinkedIn URL to call Kaspr
       if (!context.accumulated.linkedinUrl) continue;
     }
@@ -308,7 +309,6 @@ const EMAIL_SOURCES = new Set([
   "deep_scrape",
   "email_permutation",
   "google_dork",
-  "apollo",
   "kaspr",
 ]);
 
