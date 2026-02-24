@@ -1,9 +1,19 @@
-import { getDashboardStats, getEnrichmentSummary, getCategoryEmailRates } from "@/lib/data";
+"use client";
+
+import { useStats } from "@/lib/useStats";
 
 export default function EnrichmentPage() {
-  const stats = getDashboardStats();
-  const enrichment = getEnrichmentSummary();
-  const categoryRates = getCategoryEmailRates();
+  const { data, loading } = useStats();
+
+  if (loading || !data) {
+    return (
+      <div className="p-6 flex items-center justify-center h-64">
+        <div className="text-sm" style={{ color: "var(--muted)" }}>Chargement enrichissement...</div>
+      </div>
+    );
+  }
+
+  const { stats, enrichment, categoryEmailRates } = data;
 
   return (
     <div className="p-6 max-w-full">
@@ -29,37 +39,13 @@ export default function EnrichmentPage() {
       >
         <h3 className="font-semibold mb-4">{"\u{1F504}"} Pipeline d&apos;enrichissement</h3>
         <div className="flex items-center gap-2 overflow-x-auto pb-2">
-          <PipelineStep
-            step={1}
-            title="Leads scrap&eacute;s"
-            desc="Google Maps / Apify"
-            count={stats.totalLeads}
-            color="#6366f1"
-          />
+          <PipelineStep step={1} title="Leads scrapp&eacute;s" desc="Google Maps / Apify" count={stats.totalLeads} color="#6366f1" />
           <Arrow />
-          <PipelineStep
-            step={2}
-            title="Avec site web"
-            desc="Sites &agrave; scraper"
-            count={stats.withWebsite}
-            color="#818cf8"
-          />
+          <PipelineStep step={2} title="Avec site web" desc="Sites &agrave; scraper" count={stats.withWebsite} color="#818cf8" />
           <Arrow />
-          <PipelineStep
-            step={3}
-            title="Email trouv&eacute;"
-            desc="Scraping web gratuit"
-            count={stats.withEmail}
-            color="#22c55e"
-          />
+          <PipelineStep step={3} title="Email trouv&eacute;" desc="Scraping web gratuit" count={stats.withEmail} color="#22c55e" />
           <Arrow />
-          <PipelineStep
-            step={4}
-            title="Pr&ecirc;t Instantly"
-            desc="Upload campagne"
-            count={stats.withEmail}
-            color="#f59e0b"
-          />
+          <PipelineStep step={4} title="Pr&ecirc;t Instantly" desc="Upload campagne" count={stats.withEmail} color="#f59e0b" />
         </div>
       </div>
 
@@ -133,7 +119,7 @@ export default function EnrichmentPage() {
       >
         <h3 className="font-semibold mb-4">{"\u{1F4CA}"} Enrichissement par cat&eacute;gorie</h3>
         <div className="space-y-2">
-          {categoryRates.map((cat) => (
+          {categoryEmailRates.map((cat) => (
             <div key={cat.name} className="flex items-center gap-3">
               <span className="text-[11px] w-48 truncate" style={{ color: "var(--muted)" }}>
                 {cat.name}
@@ -161,30 +147,10 @@ export default function EnrichmentPage() {
   );
 }
 
-function PipelineStep({
-  step,
-  title,
-  desc,
-  count,
-  color,
-}: {
-  step: number;
-  title: string;
-  desc: string;
-  count: number;
-  color: string;
-}) {
+function PipelineStep({ step, title, desc, count, color }: { step: number; title: string; desc: string; count: number; color: string }) {
   return (
-    <div
-      className="p-4 rounded-xl min-w-40 text-center shrink-0"
-      style={{ background: "var(--background)", border: "1px solid var(--border)" }}
-    >
-      <div
-        className="w-8 h-8 rounded-full mx-auto mb-2 flex items-center justify-center text-xs font-bold"
-        style={{ background: color, color: "white" }}
-      >
-        {step}
-      </div>
+    <div className="p-4 rounded-xl min-w-40 text-center shrink-0" style={{ background: "var(--background)", border: "1px solid var(--border)" }}>
+      <div className="w-8 h-8 rounded-full mx-auto mb-2 flex items-center justify-center text-xs font-bold" style={{ background: color, color: "white" }}>{step}</div>
       <p className="text-sm font-medium">{title}</p>
       <p className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>{desc}</p>
       <p className="text-lg font-bold mt-2" style={{ color }}>{count.toLocaleString()}</p>
@@ -193,29 +159,12 @@ function PipelineStep({
 }
 
 function Arrow() {
-  return (
-    <div className="text-xl shrink-0" style={{ color: "var(--muted)" }}>
-      &rarr;
-    </div>
-  );
+  return <div className="text-xl shrink-0" style={{ color: "var(--muted)" }}>&rarr;</div>;
 }
 
-function StatBox({
-  label,
-  value,
-  color,
-  icon,
-}: {
-  label: string;
-  value: string;
-  color: string;
-  icon: string;
-}) {
+function StatBox({ label, value, color, icon }: { label: string; value: string; color: string; icon: string }) {
   return (
-    <div
-      className="p-4 rounded-xl text-center"
-      style={{ background: "var(--card)", border: "1px solid var(--border)" }}
-    >
+    <div className="p-4 rounded-xl text-center" style={{ background: "var(--card)", border: "1px solid var(--border)" }}>
       <span className="text-2xl">{icon}</span>
       <p className="text-2xl font-bold mt-1" style={{ color }}>{value}</p>
       <p className="text-xs mt-1" style={{ color: "var(--muted)" }}>{label}</p>

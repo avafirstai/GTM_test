@@ -11,9 +11,9 @@ interface ScoreDistProps {
 
 export function ScoreDistribution({ high, medium, low, avgScore, avgRating, totalReviews }: ScoreDistProps) {
   const total = high + medium + low;
-  const highPct = Math.round((high / total) * 100);
-  const medPct = Math.round((medium / total) * 100);
-  const lowPct = Math.round((low / total) * 100);
+  const highPct = total > 0 ? Math.round((high / total) * 100) : 0;
+  const medPct = total > 0 ? Math.round((medium / total) * 100) : 0;
+  const lowPct = total > 0 ? Math.round((low / total) * 100) : 0;
 
   return (
     <div

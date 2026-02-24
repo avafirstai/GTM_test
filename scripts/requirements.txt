@@ -1,4 +1,13 @@
-aiohttp>=3.9.0
-beautifulsoup4>=4.12.0
-lxml>=5.0.0
-playwright>=1.40.0
+# AVA GTM Pipeline — Python dependencies
+# Install: pip install -r scripts/requirements.txt
+#
+# For google_maps_scraper.py (Playwright), also run:
+#   python3 -m playwright install chromium
+
+# Email scraper (async HTTP + HTML parsing)
+aiohttp==3.11.11
+beautifulsoup4==4.12.3
+lxml==5.3.0
+
+# Google Maps scraper (browser automation — optional)
+playwright==1.49.1

@@ -10,7 +10,7 @@ export function VerticaleChart({ data }: { data: Record<string, number> }) {
     .map(([name, count]) => ({ name, count }))
     .sort((a, b) => b.count - a.count);
 
-  const max = Math.max(...items.map((i) => i.count));
+  const max = items.length > 0 ? Math.max(...items.map((i) => i.count)) : 1;
   const colors = [
     "#6366f1", "#818cf8", "#a78bfa", "#c084fc",
     "#e879f9", "#f472b6", "#fb7185", "#f97316", "#fbbf24"

@@ -1,7 +1,5 @@
 "use client";
 
-import { useState, useEffect } from "react";
-
 interface ApifyRun {
   runId: string;
   datasetId: string;
@@ -12,8 +10,6 @@ interface ApifyRun {
 }
 
 export function ScrapingStatus({ runs }: { runs: ApifyRun[] }) {
-  const [currentRuns, setCurrentRuns] = useState(runs);
-
   const statusColors: Record<string, string> = {
     SUCCEEDED: "#22c55e",
     RUNNING: "#f59e0b",
@@ -22,10 +18,10 @@ export function ScrapingStatus({ runs }: { runs: ApifyRun[] }) {
   };
 
   const statusIcons: Record<string, string> = {
-    SUCCEEDED: "✅",
-    RUNNING: "⏳",
-    READY: "🔄",
-    FAILED: "❌",
+    SUCCEEDED: "\u2705",
+    RUNNING: "\u23F3",
+    READY: "\uD83D\uDD04",
+    FAILED: "\u274C",
   };
 
   return (
@@ -34,7 +30,7 @@ export function ScrapingStatus({ runs }: { runs: ApifyRun[] }) {
       style={{ background: "var(--card)", border: "1px solid var(--border)" }}
     >
       <div className="flex items-center justify-between mb-4">
-        <h3 className="text-lg font-semibold">🕷️ Scraping Apify — France</h3>
+        <h3 className="text-lg font-semibold">{"\uD83D\uDD77\uFE0F"} Scraping Apify — France</h3>
         <span
           className="text-xs px-2 py-1 rounded-full font-medium"
           style={{
@@ -42,22 +38,22 @@ export function ScrapingStatus({ runs }: { runs: ApifyRun[] }) {
             color: "#818cf8",
           }}
         >
-          {currentRuns.filter((r) => r.status === "RUNNING").length} en cours
+          {runs.filter((r) => r.status === "RUNNING").length} en cours
         </span>
       </div>
       <div className="space-y-2">
-        {currentRuns.map((run) => (
+        {runs.map((run) => (
           <div
             key={run.runId}
             className="flex items-center gap-3 p-3 rounded-lg"
             style={{ background: "var(--background)" }}
           >
-            <span>{statusIcons[run.status] || "❓"}</span>
+            <span>{statusIcons[run.status] || "\u2753"}</span>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium truncate">{run.verticale}</p>
               <p className="text-xs" style={{ color: "var(--muted)" }}>
-                {run.queriesCount} requêtes
-                {run.resultsCount ? ` • ${run.resultsCount} résultats` : ""}
+                {run.queriesCount} requ{"\u00EA"}tes
+                {run.resultsCount ? ` \u2022 ${run.resultsCount} r\u00E9sultats` : ""}
               </p>
             </div>
             <span
@@ -74,8 +70,8 @@ export function ScrapingStatus({ runs }: { runs: ApifyRun[] }) {
       </div>
       <div className="mt-4 p-3 rounded-lg" style={{ background: "rgba(99,102,241,0.08)" }}>
         <p className="text-xs" style={{ color: "var(--muted)" }}>
-          📍 <strong>930 requêtes</strong> planifiées • 30 villes × 31 catégories •
-          Objectif: 50K-100K entreprises France entière
+          {"\uD83D\uDCCD"} <strong>930 requ{"\u00EA"}tes</strong> planifi{"\u00E9"}es {"\u2022"} 30 villes {"\u00D7"} 31 cat{"\u00E9"}gories {"\u2022"}
+          Objectif: 50K-100K entreprises France enti{"\u00E8"}re
         </p>
       </div>
     </div>

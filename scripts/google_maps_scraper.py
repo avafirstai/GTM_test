@@ -1,500 +1,336 @@
 #!/usr/bin/env python3
 """
-AVA GTM — Google Maps Scraper (FREE — replaces Apify)
-Scrape business leads from Google Maps using Google's public Places API.
+AVA GTM -- Google Maps Website Scraper (Playwright)
+Scrape business NAMES + WEBSITES from Google Maps search results.
 
-This scraper uses Google Maps' publicly accessible search results
-to find businesses by category and location. 100% gratuit.
+NOTE: For bulk scraping (1000+ leads), prefer the Apify Google Maps actor
+which is more reliable and already produced our 8,360 lead dataset.
+This script is useful for small targeted scrapes (< 200 results).
 
 Usage:
-    python3 scripts/google_maps_scraper.py --query "dentiste Paris" --limit 100
-    python3 scripts/google_maps_scraper.py --verticale dentiste --ville Paris --limit 200
-    python3 scripts/google_maps_scraper.py --config scripts/scrape_config.json
+    python3 scripts/google_maps_scraper.py --verticale dentiste --ville Paris --limit 20
+    python3 scripts/google_maps_scraper.py --all --villes 10 --limit 30
+    python3 scripts/google_maps_scraper.py --list-verticales
+
+Requirements:
+    pip install playwright
+    python3 -m playwright install chromium
 """
 
+import argparse
 import csv
-import json
 import re
 import sys
 import time
-import urllib.parse
-import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from urllib.parse import quote
 
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
+from playwright.sync_api import sync_playwright, Page, Browser, TimeoutError as PwTimeout
 
-# Google Maps search URL (no API key needed — public web search)
-GOOGLE_MAPS_SEARCH_URL = "https://www.google.com/maps/search/{query}"
+REQUEST_TIMEOUT = 15_000
+DELAY_BETWEEN = 2
 
-# Headers to mimic a real browser
-BROWSER_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/121.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.5",
-    "Accept-Encoding": "identity",
-}
-
-REQUEST_TIMEOUT = 15
-DELAY_BETWEEN_REQUESTS = 2  # seconds — be respectful
-
-# French cities to target
 FRENCH_CITIES = [
     "Paris", "Marseille", "Lyon", "Toulouse", "Nice", "Nantes",
     "Strasbourg", "Montpellier", "Bordeaux", "Lille", "Rennes",
-    "Reims", "Saint-Étienne", "Toulon", "Le Havre", "Grenoble",
-    "Dijon", "Angers", "Nîmes", "Villeurbanne", "Clermont-Ferrand",
+    "Reims", "Saint-Etienne", "Toulon", "Le Havre", "Grenoble",
+    "Dijon", "Angers", "Nimes", "Villeurbanne", "Clermont-Ferrand",
     "Le Mans", "Aix-en-Provence", "Brest", "Tours", "Amiens",
-    "Limoges", "Perpignan", "Metz", "Besançon", "Orléans",
+    "Limoges", "Perpignan", "Metz", "Besancon", "Orleans",
     "Rouen", "Mulhouse", "Caen", "Nancy", "Avignon",
 ]
 
-# Verticale → Google Maps search queries
 VERTICALE_QUERIES: dict[str, list[str]] = {
-    "dentiste": ["dentiste", "cabinet dentaire", "chirurgien dentiste"],
-    "medecin": ["médecin généraliste", "cabinet médical", "docteur"],
-    "immobilier": ["agence immobilière", "immobilier"],
-    "avocat": ["avocat", "cabinet d'avocat", "cabinet juridique"],
-    "comptable": ["expert comptable", "cabinet comptable"],
-    "formation": ["centre de formation", "organisme de formation", "école formation"],
-    "coiffeur": ["salon de coiffure", "coiffeur"],
-    "beaute": ["salon de beauté", "institut de beauté", "esthéticienne"],
-    "restaurant": ["restaurant gastronomique", "restaurant étoilé"],
-    "veterinaire": ["vétérinaire", "clinique vétérinaire"],
-    "plombier": ["plombier", "plombier chauffagiste"],
-    "electricien": ["électricien", "entreprise électricité"],
-    "garage": ["garage automobile", "réparation automobile"],
-    "auto_ecole": ["auto-école", "auto école"],
-    "architecte": ["architecte", "cabinet d'architecture"],
-    "kine": ["kinésithérapeute", "cabinet de kiné"],
-    "osteopathe": ["ostéopathe", "cabinet ostéopathie"],
-    "opticien": ["opticien", "lunettes"],
+    "dentiste": ["dentiste"],
+    "medecin": ["medecin generaliste"],
+    "immobilier": ["agence immobiliere"],
+    "avocat": ["avocat"],
+    "comptable": ["expert comptable"],
+    "formation": ["centre de formation"],
+    "coiffeur": ["salon de coiffure"],
+    "beaute": ["institut de beaute"],
+    "restaurant": ["restaurant"],
+    "veterinaire": ["veterinaire"],
+    "plombier": ["plombier"],
+    "electricien": ["electricien"],
+    "garage": ["garage automobile"],
+    "auto_ecole": ["auto ecole"],
+    "architecte": ["architecte"],
+    "kine": ["kinesitherapeute"],
+    "osteopathe": ["osteopathe"],
+    "opticien": ["opticien"],
     "pharmacie": ["pharmacie"],
-    "assurance": ["assurance", "cabinet assurance", "courtier assurance"],
+    "assurance": ["courtier assurance"],
 }
 
 
 @dataclass
 class ScrapedBusiness:
-    """A business scraped from Google Maps."""
-    name: str = ""
-    phone: str = ""
+    nom_entreprise: str = ""
+    telephone: str = ""
+    adresse: str = ""
+    ville: str = ""
     website: str = ""
-    address: str = ""
-    city: str = ""
-    category: str = ""
-    rating: float = 0.0
-    reviews: int = 0
-    place_id: str = ""
-    latitude: float = 0.0
-    longitude: float = 0.0
+    verticale: str = ""
+    source: str = ""
 
 
-# ---------------------------------------------------------------------------
-# Google Maps HTML Parser
-# ---------------------------------------------------------------------------
+def create_browser(pw: object) -> Browser:
+    return pw.chromium.launch(
+        headless=True,
+        args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
+    )
 
-def extract_businesses_from_html(html: str, query: str, city: str) -> list[ScrapedBusiness]:
-    """Extract business data from Google Maps search HTML."""
+
+def new_page(browser: Browser) -> Page:
+    ctx = browser.new_context(
+        locale="fr-FR",
+        timezone_id="Europe/Paris",
+        viewport={"width": 1280, "height": 800},
+        user_agent=(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/122.0.0.0 Safari/537.36"
+        ),
+    )
+    return ctx.new_page()
+
+
+def _extract_website_from_detail(page: Page) -> str:
+    """Extract website URL from Google Maps detail panel using multiple strategies."""
+    # Strategy 1: Look for website link by aria-label pattern
+    for selector in [
+        "a[data-item-id='authority']",
+        "a[aria-label*='site Web']",
+        "a[aria-label*='Website']",
+        "a[aria-label*='site web']",
+    ]:
+        el = page.query_selector(selector)
+        if el:
+            href = el.get_attribute("href") or ""
+            if href and "google" not in href and not href.startswith("/"):
+                return href
+
+    # Strategy 2: Find links in the info section that look like websites
+    # Google Maps shows website links with a globe icon
+    links = page.query_selector_all("a[href^='http']")
+    for link in links:
+        href = link.get_attribute("href") or ""
+        # Skip Google/social/maps links
+        if any(skip in href for skip in [
+            "google.com", "google.fr", "maps.app",
+            "facebook.com", "instagram.com", "twitter.com",
+            "linkedin.com", "youtube.com", "tripadvisor",
+        ]):
+            continue
+        # Must look like a real website
+        if re.match(r"https?://[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", href):
+            return href
+
+    return ""
+
+
+def scrape_google_maps(
+    page: Page, query: str, ville: str, limit: int,
+) -> list[ScrapedBusiness]:
+    """Scrape names + websites from Google Maps search results."""
+    url = f"https://www.google.com/maps/search/{quote(f'{query} {ville}')}"
+
+    try:
+        page.goto(url, timeout=REQUEST_TIMEOUT, wait_until="domcontentloaded")
+    except (PwTimeout, Exception):
+        return []
+
+    # Accept cookies consent
+    try:
+        btn = page.query_selector(
+            "button[aria-label*='Tout accepter'], "
+            "button[aria-label*='Accept all'], "
+            "button:has-text('Tout accepter')"
+        )
+        if btn:
+            btn.click()
+            time.sleep(1.5)
+    except Exception:
+        pass
+
+    # Wait for results feed
+    try:
+        page.wait_for_selector("div[role='feed'], div.Nv2PK", timeout=10000)
+    except PwTimeout:
+        return []
+
+    # Scroll to load more results
+    feed = page.query_selector("div[role='feed']")
+    if feed:
+        for _ in range(min(limit // 5, 8)):
+            feed.evaluate("el => el.scrollTop = el.scrollHeight")
+            time.sleep(0.7)
+
+    # Collect business names from the list
     businesses: list[ScrapedBusiness] = []
+    seen: set[str] = set()
+    cards = page.query_selector_all("div.Nv2PK")
 
-    # Google Maps embeds business data in JavaScript as JSON-like structures
-    # Pattern 1: Extract from window.APP_INITIALIZATION_STATE or similar
-    # Pattern 2: Extract from data attributes
-    # Pattern 3: Regex on structured data patterns
+    for card in cards:
+        if len(businesses) >= limit:
+            break
 
-    # Extract phone numbers
-    phone_pattern = re.compile(r'(\+33[\s.-]?\d[\s.-]?\d{2}[\s.-]?\d{2}[\s.-]?\d{2}[\s.-]?\d{2})')
-    phones_found = phone_pattern.findall(html)
-
-    # Extract websites
-    website_pattern = re.compile(r'https?://(?:www\.)?([a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:\.[a-zA-Z]{2,})?)')
-    websites_found = website_pattern.findall(html)
-
-    # Extract ratings (e.g., "4.5" near "avis" or "étoiles")
-    rating_pattern = re.compile(r'(\d\.\d)\s*(?:étoiles|stars|sur\s*5)')
-
-    # Extract business names from structured data
-    # Google Maps uses a specific JSON structure we can parse
-    name_patterns = [
-        re.compile(r'\["([^"]{3,80})","[^"]*",\[(?:null|\d),(?:null|\d)'),
-        re.compile(r'aria-label="([^"]{3,80})"'),
-        re.compile(r'data-tooltip="([^"]{3,80})"'),
-    ]
-
-    # Parse the page for structured business data
-    # Google Maps returns data in a complex nested array format
-    # We look for patterns like: [null,null,["business_name",...]]
-
-    # Try to find JSON-embedded data
-    json_blocks = re.findall(r'\[\[\"(.*?)\"(?:,|\])', html[:500000])
-
-    # Simpler approach: find all business-like entries
-    # Google Maps HTML contains patterns like:
-    # "BusinessName","address","phone"
-    entry_pattern = re.compile(
-        r'"([^"]{2,80})"[,\s]*"([^"]*(?:rue|avenue|boulevard|place|chemin|allée|impasse|cours|passage)[^"]*)"',
-        re.IGNORECASE
-    )
-
-    entries = entry_pattern.findall(html[:500000])
-    for name, address in entries[:50]:  # Limit to 50 per page
-        if len(name) < 3 or len(name) > 80:
+        name_el = card.query_selector(".qBF1Pd, .fontHeadlineSmall")
+        name = (name_el.inner_text() or "").strip() if name_el else ""
+        if not name or name in seen:
             continue
-        # Skip non-business entries
-        if any(skip in name.lower() for skip in ["google", "maps", "search", "javascript", "window"]):
-            continue
+        seen.add(name)
 
-        biz = ScrapedBusiness(
-            name=name,
-            address=address,
-            city=city,
-            category=query,
-        )
-        businesses.append(biz)
+        businesses.append(ScrapedBusiness(
+            nom_entreprise=name,
+            ville=ville,
+            verticale=query,
+            source="google_maps",
+            website="",
+        ))
 
-    # Also try to extract from structured arrays
-    # Pattern: [null,[lat,lng],...,"business name",...,"address",...,"phone"]
-    struct_pattern = re.compile(
-        r'\[null,\[(-?\d+\.\d+),(-?\d+\.\d+)\].*?"([^"]{3,80})".*?"(\+33[^"]*)"',
-        re.DOTALL
-    )
-    for match in struct_pattern.finditer(html[:500000]):
-        lat, lng, name, phone = match.groups()
-        biz = ScrapedBusiness(
-            name=name,
-            phone=phone.replace(" ", ""),
-            city=city,
-            category=query,
-            latitude=float(lat),
-            longitude=float(lng),
-        )
-        businesses.append(biz)
+    # Visit each place detail page to extract website
+    for biz in businesses:
+        try:
+            all_cards = page.query_selector_all("div.Nv2PK")
+            for c in all_cards:
+                n = c.query_selector(".qBF1Pd, .fontHeadlineSmall")
+                if n and (n.inner_text() or "").strip() == biz.nom_entreprise:
+                    c.click()
+                    time.sleep(1.5)
 
+                    biz.website = _extract_website_from_detail(page)
+
+                    # Navigate back to results list
+                    back = page.query_selector(
+                        "button[aria-label='Retour'], "
+                        "button[aria-label='Back'], "
+                        "button[jsaction*='back']"
+                    )
+                    if back:
+                        back.click()
+                    else:
+                        page.go_back()
+                    time.sleep(0.5)
+                    try:
+                        page.wait_for_selector("div[role='feed']", timeout=3000)
+                    except PwTimeout:
+                        pass
+                    break
+        except Exception:
+            pass
+
+    w = sum(1 for b in businesses if b.website)
+    print(f"{len(businesses)}L/{w}W", end=" ")
     return businesses
 
 
-def search_google_maps(query: str, city: str) -> list[ScrapedBusiness]:
-    """Search Google Maps for businesses and extract results."""
-    search_term = f"{query} {city}"
-    encoded = urllib.parse.quote(search_term)
-    url = GOOGLE_MAPS_SEARCH_URL.format(query=encoded)
-
-    req = urllib.request.Request(url, headers=BROWSER_HEADERS)
-    try:
-        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
-            html = resp.read().decode("utf-8", errors="replace")
-            return extract_businesses_from_html(html, query, city)
-    except Exception as e:
-        print(f"    Error searching '{search_term}': {e}")
-        return []
-
-
-# ---------------------------------------------------------------------------
-# Alternative: Use Google Places Nearby Search (Text Search)
-# This uses Google's public web endpoints, not the paid API
-# ---------------------------------------------------------------------------
-
-def search_via_serpapi_free(query: str, city: str) -> list[ScrapedBusiness]:
-    """
-    Alternative scraping approach using public search results.
-    Parses Google search results for business info.
-    """
-    search_term = f"{query} {city} site:google.com/maps"
-    encoded = urllib.parse.quote(search_term)
-    url = f"https://www.google.com/search?q={encoded}&num=20&hl=fr"
-
-    req = urllib.request.Request(url, headers=BROWSER_HEADERS)
-    try:
-        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
-            html = resp.read().decode("utf-8", errors="replace")
-
-        businesses: list[ScrapedBusiness] = []
-
-        # Extract business names and details from Google search results
-        # Pattern: business name in title tags
-        title_pattern = re.compile(r'<h3[^>]*>([^<]+)</h3>')
-        phone_pattern = re.compile(r'(\+33[\s.-]?\d[\s.-]?\d{2}[\s.-]?\d{2}[\s.-]?\d{2}[\s.-]?\d{2})')
-
-        titles = title_pattern.findall(html)
-        phones = phone_pattern.findall(html)
-
-        for title in titles[:20]:
-            if len(title) < 3 or any(skip in title.lower() for skip in ["google", "maps", "search"]):
-                continue
-            biz = ScrapedBusiness(
-                name=title,
-                city=city,
-                category=query,
-            )
-            businesses.append(biz)
-
-        # Try to match phones to businesses
-        for i, phone in enumerate(phones):
-            if i < len(businesses):
-                businesses[i].phone = phone.replace(" ", "").replace(".", "")
-
-        return businesses
-
-    except Exception as e:
-        print(f"    Error in Google search for '{query} {city}': {e}")
-        return []
-
-
-# ---------------------------------------------------------------------------
-# Pages Jaunes Scraper (BEST FREE ALTERNATIVE)
-# ---------------------------------------------------------------------------
-
-def search_pages_jaunes(query: str, city: str) -> list[ScrapedBusiness]:
-    """
-    Scrape PagesJaunes.fr — the BEST free source for French businesses.
-    Returns name, phone, address, website for each result.
-    """
-    encoded_query = urllib.parse.quote(query)
-    encoded_city = urllib.parse.quote(city)
-    url = f"https://www.pagesjaunes.fr/annuaire/chercherlespros?quoiqui={encoded_query}&ou={encoded_city}"
-
-    req = urllib.request.Request(url, headers=BROWSER_HEADERS)
-    try:
-        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
-            html = resp.read().decode("utf-8", errors="replace")
-
-        businesses: list[ScrapedBusiness] = []
-
-        # PagesJaunes uses structured HTML with clear patterns
-        # Business name: class="denomination-links"
-        # Phone: class="number-phone"
-        # Address: class="adresse"
-        # Website: class="pj-link" or href to external site
-
-        # Extract business blocks
-        from bs4 import BeautifulSoup
-        soup = BeautifulSoup(html, "html.parser")
-
-        # Each business is in a <li> with class "bi-bloc"
-        blocks = soup.find_all("div", class_="bi-content") or soup.find_all("li", class_="bi-bloc")
-
-        if not blocks:
-            # Fallback: try to find any business-like entries
-            blocks = soup.find_all("div", {"data-pjlb": True})
-
-        for block in blocks[:50]:
-            biz = ScrapedBusiness(city=city, category=query)
-
-            # Name
-            name_el = (
-                block.find("a", class_="denomination-links")
-                or block.find("span", class_="denomination")
-                or block.find("h2")
-                or block.find("h3")
-            )
-            if name_el:
-                biz.name = name_el.get_text(strip=True)
-
-            # Phone
-            phone_el = block.find("span", class_="number-phone") or block.find("a", {"data-pjlb": "tel"})
-            if phone_el:
-                biz.phone = phone_el.get_text(strip=True).replace(" ", "").replace(".", "")
-
-            # Address
-            addr_el = block.find("div", class_="adresse") or block.find("span", class_="adresse")
-            if addr_el:
-                biz.address = addr_el.get_text(strip=True)
-
-            # Website
-            for link in block.find_all("a", href=True):
-                href = link["href"]
-                if "pagesjaunes.fr" not in href and href.startswith("http"):
-                    biz.website = href
-                    break
-
-            # Rating
-            rating_el = block.find("span", class_="note")
-            if rating_el:
-                try:
-                    biz.rating = float(rating_el.get_text(strip=True).replace(",", "."))
-                except ValueError:
-                    pass
-
-            # Reviews count
-            reviews_el = block.find("span", class_="nb-avis")
-            if reviews_el:
-                text = reviews_el.get_text(strip=True)
-                nums = re.findall(r'\d+', text)
-                if nums:
-                    biz.reviews = int(nums[0])
-
-            if biz.name and len(biz.name) > 2:
-                businesses.append(biz)
-
-        return businesses
-
-    except ImportError:
-        print("    [WARN] BeautifulSoup not available for PagesJaunes parsing")
-        return []
-    except Exception as e:
-        print(f"    Error scraping PagesJaunes for '{query} {city}': {e}")
-        return []
-
-
-# ---------------------------------------------------------------------------
-# Main Scraper Logic
-# ---------------------------------------------------------------------------
-
 def scrape_verticale(
-    verticale: str,
-    cities: list[str],
-    limit_per_city: int = 50,
-    source: str = "pagesjaunes",
+    verticale: str, cities: list[str], limit: int = 30,
 ) -> list[ScrapedBusiness]:
-    """Scrape a verticale across multiple cities."""
     queries = VERTICALE_QUERIES.get(verticale, [verticale])
-    all_businesses: list[ScrapedBusiness] = []
-    seen_names: set[str] = set()
-
-    total_queries = len(queries) * len(cities)
+    all_biz: list[ScrapedBusiness] = []
+    seen: set[str] = set()
+    total = len(queries) * len(cities)
     done = 0
 
-    for query in queries:
-        for city in cities:
-            done += 1
-            print(f"  [{done}/{total_queries}] {query} — {city}...", end=" ")
-            sys.stdout.flush()
+    with sync_playwright() as pw:
+        browser = create_browser(pw)
+        try:
+            pg = new_page(browser)
+            for query in queries:
+                for city in cities:
+                    done += 1
+                    print(f"  [{done}/{total}] {query} -- {city}... ", end="")
+                    sys.stdout.flush()
 
-            if source == "pagesjaunes":
-                results = search_pages_jaunes(query, city)
-            elif source == "google":
-                results = search_google_maps(query, city)
-            else:
-                results = search_via_serpapi_free(query, city)
+                    results = scrape_google_maps(pg, query, city, limit)
 
-            new_count = 0
-            for biz in results[:limit_per_city]:
-                key = f"{biz.name}|{biz.city}".lower()
-                if key not in seen_names:
-                    seen_names.add(key)
-                    all_businesses.append(biz)
-                    new_count += 1
+                    new_count = 0
+                    for biz in results:
+                        key = f"{biz.nom_entreprise}|{biz.ville}".lower()
+                        if key not in seen and biz.nom_entreprise:
+                            seen.add(key)
+                            biz.verticale = verticale
+                            all_biz.append(biz)
+                            new_count += 1
 
-            print(f"+{new_count} leads")
-            sys.stdout.flush()
+                    print(f"-> +{new_count} (total: {len(all_biz)})")
+                    time.sleep(DELAY_BETWEEN)
+        finally:
+            browser.close()
 
-            # Rate limiting
-            time.sleep(DELAY_BETWEEN_REQUESTS)
-
-    return all_businesses
+    return all_biz
 
 
-def export_leads_csv(businesses: list[ScrapedBusiness], output_path: str) -> None:
-    """Export scraped businesses to CSV."""
-    fieldnames = [
-        "title", "phone", "website", "category", "city",
-        "address", "rating", "reviews", "place_id",
-    ]
-
-    with open(output_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-
-        for biz in businesses:
-            writer.writerow({
-                "title": biz.name,
-                "phone": biz.phone,
-                "website": biz.website,
-                "category": biz.category,
-                "city": biz.city,
-                "address": biz.address,
-                "rating": biz.rating,
-                "reviews": biz.reviews,
-                "place_id": biz.place_id,
+def export_csv(businesses: list[ScrapedBusiness], path: str) -> None:
+    fields = ["nom_entreprise", "telephone", "adresse", "ville", "website", "verticale", "source"]
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=fields)
+        w.writeheader()
+        for b in businesses:
+            w.writerow({
+                "nom_entreprise": b.nom_entreprise,
+                "telephone": b.telephone,
+                "adresse": b.adresse,
+                "ville": b.ville,
+                "website": b.website,
+                "verticale": b.verticale,
+                "source": b.source,
             })
+    print(f"\n[Export] {len(businesses)} leads -> {path}")
 
-    print(f"\n[Export] {len(businesses)} leads → {output_path}")
-
-
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
 
 def main() -> None:
-    import argparse
-
-    parser = argparse.ArgumentParser(description="AVA GTM — Google Maps Scraper (FREE)")
-    parser.add_argument("--verticale", type=str, help="Verticale to scrape (e.g., dentiste, avocat)")
-    parser.add_argument("--ville", type=str, help="Single city to scrape")
-    parser.add_argument("--villes", type=int, default=10, help="Number of top cities to scrape (default: 10)")
-    parser.add_argument("--limit", type=int, default=50, help="Max leads per city per query")
-    parser.add_argument("--source", type=str, default="pagesjaunes", choices=["pagesjaunes", "google", "search"], help="Data source")
-    parser.add_argument("--output", type=str, default="scripts/scraped-leads.csv", help="Output CSV path")
-    parser.add_argument("--list-verticales", action="store_true", help="List available verticales")
-    parser.add_argument("--config", type=str, help="JSON config file for batch scraping")
+    parser = argparse.ArgumentParser(description="AVA GTM -- Google Maps Website Scraper")
+    parser.add_argument("--verticale", type=str)
+    parser.add_argument("--ville", type=str)
+    parser.add_argument("--villes", type=int, default=10)
+    parser.add_argument("--limit", type=int, default=30)
+    parser.add_argument("--output", type=str, default="scripts/scraped-leads.csv")
+    parser.add_argument("--list-verticales", action="store_true")
+    parser.add_argument("--all", action="store_true")
     args = parser.parse_args()
 
     print("=" * 60)
-    print("  AVA GTM — GOOGLE MAPS SCRAPER (FREE)")
-    print("  No Apify. No API key. 100% gratuit.")
+    print("  AVA GTM -- GOOGLE MAPS WEBSITE SCRAPER")
+    print("  Goal: extract websites -> email_scraper gets emails")
+    print("  NOTE: For bulk scraping, prefer the Apify Google Maps actor")
     print("=" * 60)
 
     if args.list_verticales:
-        print("\nVerticales disponibles :")
-        for v, queries in sorted(VERTICALE_QUERIES.items()):
-            print(f"  {v:20s} : {', '.join(queries)}")
+        for v, q in sorted(VERTICALE_QUERIES.items()):
+            print(f"  {v:20s} : {', '.join(q)}")
         return
 
-    # Config file mode
-    if args.config:
-        with open(args.config) as f:
-            config = json.load(f)
+    if args.all:
+        cities = [args.ville] if args.ville else FRENCH_CITIES[: args.villes]
         all_leads: list[ScrapedBusiness] = []
-        for job in config.get("jobs", []):
-            verticale = job["verticale"]
-            cities = job.get("villes", FRENCH_CITIES[:args.villes])
-            limit = job.get("limit", args.limit)
-            print(f"\n[Job] Scraping {verticale} in {len(cities)} cities...")
-            leads = scrape_verticale(verticale, cities, limit, args.source)
+        verts = list(VERTICALE_QUERIES.keys())
+        print(f"\n  {len(verts)} verticales x {len(cities)} villes x {args.limit} limit\n")
+        for i, v in enumerate(verts, 1):
+            print(f"\n[{i}/{len(verts)}] === {v} ===")
+            leads = scrape_verticale(v, cities, args.limit)
             all_leads.extend(leads)
-        export_leads_csv(all_leads, args.output)
+            print(f"  -> {len(leads)} | Total: {len(all_leads)}")
+        Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+        export_csv(all_leads, args.output)
+        w = sum(1 for lead in all_leads if lead.website)
+        print(f"\n  DONE: {len(all_leads)} leads, {w} websites ({100*w//max(len(all_leads),1)}%)")
         return
 
-    # Single verticale mode
     if not args.verticale:
-        print("[ERROR] Specify --verticale (e.g., --verticale dentiste)")
-        print("  Use --list-verticales to see all options")
+        print("[ERROR] Use --verticale or --all")
         sys.exit(1)
 
-    cities = [args.ville] if args.ville else FRENCH_CITIES[:args.villes]
-
-    print(f"\n[Config] Verticale: {args.verticale}")
-    print(f"[Config] Cities: {', '.join(cities)}")
-    print(f"[Config] Source: {args.source}")
-    print(f"[Config] Limit per city: {args.limit}")
-    print()
-
-    leads = scrape_verticale(args.verticale, cities, args.limit, args.source)
-
-    # Export
-    output = Path(args.output)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    export_leads_csv(leads, str(output))
-
-    # Summary
-    with_phone = sum(1 for l in leads if l.phone)
-    with_website = sum(1 for l in leads if l.website)
-    print(f"\n{'='*60}")
-    print(f"  SCRAPING COMPLETE")
-    print(f"{'='*60}")
-    print(f"  Total leads:    {len(leads)}")
-    print(f"  With phone:     {with_phone} ({100*with_phone/max(len(leads),1):.0f}%)")
-    print(f"  With website:   {with_website} ({100*with_website/max(len(leads),1):.0f}%)")
-    print(f"  Output:         {args.output}")
-    print(f"{'='*60}")
+    cities = [args.ville] if args.ville else FRENCH_CITIES[: args.villes]
+    leads = scrape_verticale(args.verticale, cities, args.limit)
+    Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+    export_csv(leads, args.output)
+    w = sum(1 for lead in leads if lead.website)
+    print(f"\n  DONE: {len(leads)} leads, {w} websites ({100*w//max(len(leads),1)}%)")
 
 
 if __name__ == "__main__":

@@ -8,8 +8,9 @@ import urllib.error
 import sys
 import os
 
-SUPABASE_URL = "https://cifxffapwtksxhaphepv.supabase.co"
-SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNpZnhmZmFwd3Rrc3hoYXBoZXB2Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE4NzQwMDgsImV4cCI6MjA4NzQ1MDAwOH0.9PYtJudc7oEyxzfklu2TklakMNmvtL3K5OYljrsgytw"
+# Supabase credentials from environment — NEVER hardcode
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
+SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "")
 
 CSV_PATH = os.path.join(os.path.dirname(__file__), "leads-enriched-emails.csv")
 BATCH_SIZE = 500
@@ -36,6 +37,10 @@ def upsert_batch(rows: list[dict]) -> int:
 
 
 def main() -> None:
+    if not SUPABASE_URL or not SUPABASE_ANON_KEY:
+        print("ERROR: Set SUPABASE_URL and SUPABASE_ANON_KEY environment variables")
+        sys.exit(1)
+
     if not os.path.exists(CSV_PATH):
         print(f"CSV not found: {CSV_PATH}")
         sys.exit(1)

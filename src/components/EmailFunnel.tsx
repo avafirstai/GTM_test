@@ -13,9 +13,9 @@ export function EmailFunnel({ total, withWebsite, withEmail, withPhone }: Funnel
   const stages = useMemo(
     () => [
       { label: "Leads Scrappés", count: total, color: "#6366f1", pct: 100 },
-      { label: "Avec Téléphone", count: withPhone, color: "#818cf8", pct: Math.round((withPhone / total) * 100) },
-      { label: "Avec Site Web", count: withWebsite, color: "#a78bfa", pct: Math.round((withWebsite / total) * 100) },
-      { label: "Email Trouvé", count: withEmail, color: "#22c55e", pct: Math.round((withEmail / total) * 100) },
+      { label: "Avec Téléphone", count: withPhone, color: "#818cf8", pct: total > 0 ? Math.round((withPhone / total) * 100) : 0 },
+      { label: "Avec Site Web", count: withWebsite, color: "#a78bfa", pct: total > 0 ? Math.round((withWebsite / total) * 100) : 0 },
+      { label: "Email Trouvé", count: withEmail, color: "#22c55e", pct: total > 0 ? Math.round((withEmail / total) * 100) : 0 },
     ],
     [total, withWebsite, withEmail, withPhone]
   );
@@ -37,7 +37,7 @@ export function EmailFunnel({ total, withWebsite, withEmail, withPhone }: Funnel
 
       <div className="space-y-3">
         {stages.map((stage, i) => {
-          const widthPct = Math.max((stage.count / total) * 100, 4);
+          const widthPct = total > 0 ? Math.max((stage.count / total) * 100, 4) : 4;
           return (
             <div key={stage.label} className="relative">
               <div className="flex items-center justify-between mb-1">

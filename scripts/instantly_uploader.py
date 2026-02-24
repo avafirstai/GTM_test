@@ -4,10 +4,14 @@ AVA GTM — Instantly Uploader
 Upload enriched leads to Instantly campaigns by verticale.
 Uses Instantly API v2 with Bearer token.
 
+Env vars:
+    INSTANTLY_API_KEY      — Instantly API key (required)
+    INSTANTLY_CAMPAIGN_ID  — Default campaign ID (or use --campaign)
+
 Usage:
-    python3 scripts/instantly_uploader.py
-    python3 scripts/instantly_uploader.py --test 5          # Test with 5 leads
-    python3 scripts/instantly_uploader.py --csv custom.csv
+    python3 scripts/instantly_uploader.py --campaign <id>
+    python3 scripts/instantly_uploader.py --test 5 --campaign <id>
+    python3 scripts/instantly_uploader.py --csv custom.csv --campaign <id>
 """
 
 import csv
@@ -25,10 +29,10 @@ from typing import Optional
 # ---------------------------------------------------------------------------
 
 INSTANTLY_API_BASE = "https://api.instantly.ai/api/v2"
-INSTANTLY_BEARER = os.environ.get("INSTANTLY_BEARER", "")
+INSTANTLY_API_KEY = os.environ.get("INSTANTLY_API_KEY", "")
 
-# Default campaign — on crée des sous-campagnes par verticale si besoin
-DEFAULT_CAMPAIGN_ID = "4cc21116-672d-43f5-8fb3-d98bcf8e1f01"
+# Campaign ID — set via env var or pass --campaign on CLI
+DEFAULT_CAMPAIGN_ID = os.environ.get("INSTANTLY_CAMPAIGN_ID", "")
 
 # CSV input (output of email_scraper.py)
 DEFAULT_CSV = "scripts/leads-enriched-emails.csv"
@@ -87,7 +91,7 @@ def instantly_api_request(
     """Make an API request to Instantly v2."""
     url = f"{INSTANTLY_API_BASE}{endpoint}"
     headers = {
-        "Authorization": f"Bearer {INSTANTLY_BEARER}",
+        "Authorization": f"Bearer {INSTANTLY_API_KEY}",
         "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AVA-GTM/1.0",
     }
@@ -107,11 +111,9 @@ def instantly_api_request(
         return {"error": True, "message": str(e)}
 
 
-def get_or_create_campaign(verticale: str, existing_campaigns: dict[str, str]) -> str:
-    """Get existing campaign ID for verticale or return default."""
-    # For now, use the default campaign for all leads
-    # In the future, we can create per-verticale campaigns
-    return DEFAULT_CAMPAIGN_ID
+def get_or_create_campaign(verticale: str, campaign_id: str) -> str:
+    """Get campaign ID for verticale. Currently uses a single campaign."""
+    return campaign_id
 
 
 def upload_leads_batch(
@@ -161,9 +163,16 @@ def main() -> None:
     print("  Upload enriched leads to Instantly campaigns")
     print("=" * 60)
 
+    # Validate env vars
+    if not INSTANTLY_API_KEY:
+        print("[ERROR] INSTANTLY_API_KEY not set. Export it first:")
+        print("  export INSTANTLY_API_KEY=your_key_here")
+        sys.exit(1)
+
     # Parse args
     csv_path = DEFAULT_CSV
     test_limit: Optional[int] = None
+    campaign_override: Optional[str] = None
 
     args = sys.argv[1:]
     i = 0
@@ -174,8 +183,17 @@ def main() -> None:
         elif args[i] == "--csv" and i + 1 < len(args):
             csv_path = args[i + 1]
             i += 2
+        elif args[i] == "--campaign" and i + 1 < len(args):
+            campaign_override = args[i + 1]
+            i += 2
         else:
             i += 1
+
+    # Resolve campaign ID
+    effective_campaign = campaign_override or DEFAULT_CAMPAIGN_ID
+    if not effective_campaign:
+        print("[ERROR] No campaign ID. Set INSTANTLY_CAMPAIGN_ID env var or pass --campaign <id>")
+        sys.exit(1)
 
     # Read CSV
     csv_file = Path(csv_path)
@@ -243,7 +261,7 @@ def main() -> None:
             remaining = test_limit - uploaded_count
             batch = leads[:remaining]
 
-        campaign_id = get_or_create_campaign(verticale, {})
+        campaign_id = get_or_create_campaign(verticale, effective_campaign)
         print(f"\n  [{verticale}] Uploading {len(batch)} leads to campaign {campaign_id[:12]}...")
 
         result = upload_leads_batch(campaign_id, batch)
@@ -264,7 +282,7 @@ def main() -> None:
     print(f"  Total uploaded:    {total_uploaded}")
     print(f"  Total errors:      {total_errors}")
     print(f"  Time:              {elapsed:.1f}s")
-    print(f"  Campaign:          {DEFAULT_CAMPAIGN_ID[:16]}...")
+    print(f"  Campaign:          {effective_campaign[:16]}...")
     print("=" * 60)
 
     # Export stats
@@ -273,7 +291,7 @@ def main() -> None:
         "total_uploaded": total_uploaded,
         "total_errors": total_errors,
         "by_verticale": {v: len(l) for v, l in leads_by_verticale.items()},
-        "campaign_id": DEFAULT_CAMPAIGN_ID,
+        "campaign_id": effective_campaign,
         "duration_seconds": round(elapsed, 1),
     }
     stats_path = Path("scripts/upload-stats.json")

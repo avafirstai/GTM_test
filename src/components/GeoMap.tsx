@@ -8,6 +8,7 @@ export function GeoMap({ data }: GeoMapProps) {
   const sorted = Object.entries(data)
     .sort((a, b) => b[1] - a[1]);
   const maxVal = sorted[0]?.[1] || 1;
+  const grandTotal = sorted.reduce((s, [, c]) => s + c, 0) || 1;
 
   return (
     <div
@@ -62,7 +63,7 @@ export function GeoMap({ data }: GeoMapProps) {
               key={ville}
               className="h-full"
               style={{
-                width: `${(count / sorted.reduce((s, [, c]) => s + c, 0)) * 100}%`,
+                width: `${(count / grandTotal) * 100}%`,
                 background: "#6366f1",
                 opacity: 0.6 + (count / maxVal) * 0.4,
               }}
@@ -70,7 +71,7 @@ export function GeoMap({ data }: GeoMapProps) {
           ))}
         </div>
         <span className="text-[10px]" style={{ color: "var(--muted)" }}>
-          Top 5 = {Math.round(sorted.slice(0, 5).reduce((s, [, c]) => s + c, 0) / sorted.reduce((s, [, c]) => s + c, 0) * 100)}%
+          Top 5 = {Math.round((sorted.slice(0, 5).reduce((s, [, c]) => s + c, 0) / grandTotal) * 100)}%
         </span>
       </div>
     </div>

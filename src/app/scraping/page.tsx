@@ -1,11 +1,22 @@
-import { getDashboardStats, getApifyRuns } from "@/lib/data";
+"use client";
+
+import { useStats } from "@/lib/useStats";
 
 export default function ScrapingPage() {
-  const stats = getDashboardStats();
-  const runs = getApifyRuns();
-  const totalQueries = runs.reduce((s, r) => s + r.queriesCount, 0);
-  const totalResults = runs.reduce((s, r) => s + (r.resultsCount ?? 0), 0);
-  const succeededRuns = runs.filter((r) => r.status === "SUCCEEDED").length;
+  const { data, loading } = useStats();
+
+  if (loading || !data) {
+    return (
+      <div className="p-6 flex items-center justify-center h-64">
+        <div className="text-sm" style={{ color: "var(--muted)" }}>Chargement scraping...</div>
+      </div>
+    );
+  }
+
+  const { stats, apifyRuns } = data;
+  const totalQueries = apifyRuns.reduce((s, r) => s + r.queriesCount, 0);
+  const totalResults = apifyRuns.reduce((s, r) => s + (r.resultsCount ?? 0), 0);
+  const succeededRuns = apifyRuns.filter((r) => r.status === "SUCCEEDED").length;
   const progressPct = Math.round((totalQueries / 930) * 100);
   const villeEntries = Object.entries(stats.byVille).sort((a, b) => b[1] - a[1]);
   const verticaleEntries = Object.entries(stats.byVerticale).sort((a, b) => b[1] - a[1]);
@@ -21,7 +32,7 @@ export default function ScrapingPage() {
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <StatBox label="Requ\u00eates lanc\u00e9es" value={String(totalQueries)} color="#6366f1" />
-        <StatBox label={`Runs (${succeededRuns}/${runs.length})`} value={String(runs.length)} color="#22c55e" />
+        <StatBox label={`Runs (${succeededRuns}/${apifyRuns.length})`} value={String(apifyRuns.length)} color="#22c55e" />
         <StatBox label="Leads uniques" value={stats.totalLeads.toLocaleString()} color="#22c55e" />
         <StatBox label="Restantes" value={String(930 - totalQueries)} color="#f59e0b" />
       </div>
@@ -41,9 +52,9 @@ export default function ScrapingPage() {
       </div>
 
       <div className="rounded-xl p-6 mb-6" style={{ background: "var(--card)", border: "1px solid var(--border)" }}>
-        <h3 className="font-semibold mb-4">{"\u{1F4E6}"} Runs Apify ({runs.length} runs)</h3>
+        <h3 className="font-semibold mb-4">{"\u{1F4E6}"} Runs Apify ({apifyRuns.length} runs)</h3>
         <div className="space-y-3">
-          {runs.map((run) => (
+          {apifyRuns.map((run) => (
             <RunCard key={run.runId} runId={run.runId} datasetId={run.datasetId} status={run.status} queries={run.queriesCount} results={run.resultsCount ?? 0} verticale={run.verticale} />
           ))}
         </div>

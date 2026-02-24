@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { getDashboardStats } from "@/lib/data";
+import { useStats } from "@/lib/useStats";
 
 interface NavItem {
   href: string;
@@ -13,15 +13,20 @@ interface NavItem {
 
 export function Sidebar() {
   const pathname = usePathname();
-  const stats = getDashboardStats();
+  const { data } = useStats();
+
+  const totalLeads = data?.stats.totalLeads ?? 0;
+  const withEmail = data?.stats.withEmail ?? 0;
+  const emailRate = data?.stats.emailRate ?? 0;
+  const verticaleCount = data ? Object.keys(data.stats.byVerticale).length : 0;
 
   const NAV_ITEMS: NavItem[] = [
     { href: "/", label: "Dashboard", icon: "\u{1F680}" },
     { href: "/launch", label: "Lancer Campagne", icon: "\u{1F3AF}" },
-    { href: "/leads", label: "Leads", icon: "\u{1F465}", badge: stats.totalLeads.toLocaleString() },
-    { href: "/campaigns", label: "Campagnes", icon: "\u{1F4E7}", badge: stats.withEmail > 0 ? String(stats.withEmail) : undefined },
+    { href: "/leads", label: "Leads", icon: "\u{1F465}", badge: totalLeads > 0 ? totalLeads.toLocaleString() : undefined },
+    { href: "/campaigns", label: "Campagnes", icon: "\u{1F4E7}", badge: withEmail > 0 ? String(withEmail) : undefined },
     { href: "/enrichment", label: "Enrichissement", icon: "\u{1F50D}" },
-    { href: "/verticales", label: "Verticales", icon: "\u{1F4CA}", badge: String(Object.keys(stats.byVerticale).length) },
+    { href: "/verticales", label: "Verticales", icon: "\u{1F4CA}", badge: verticaleCount > 0 ? String(verticaleCount) : undefined },
     { href: "/scraping", label: "Scraping", icon: "\u{1F577}\u{FE0F}" },
     { href: "/social", label: "Social Media", icon: "\u{1F4F1}" },
   ];
@@ -121,7 +126,7 @@ export function Sidebar() {
             Pipeline: Autonome
           </p>
           <p className="text-[10px] mt-0.5" style={{ color: "var(--muted)" }}>
-            {stats.totalLeads.toLocaleString()} leads &bull; {stats.withEmail} emails &bull; {stats.emailRate}%
+            {totalLeads.toLocaleString()} leads &bull; {withEmail} emails &bull; {emailRate}%
           </p>
         </div>
       </div>

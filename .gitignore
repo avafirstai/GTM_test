@@ -5,9 +5,19 @@ node_modules/
 .vercel
 .env
 .env.local
+.env.production
 
-# Scripts data (sensitive leads data)
+# Scripts data (sensitive leads data — PII)
 scripts/*.csv
 scripts/*.json
 scripts/__pycache__/
 scripts/pipeline.log
+scripts/debug_*.png
+
+# Temp/generated files
+scripts/_gen*.py
+scripts/_write*.py
+scripts/*.bak
+
+# Old dashboard build artifacts
+ava-gtm-dashboard/
