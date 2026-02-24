@@ -20,8 +20,19 @@ export interface Lead {
   instantly_status: "imported" | "pending" | "not_imported";
   verticale: string;
   decision_makers: DecisionMaker[];
-  enrichment_status: "pending" | "in_progress" | "completed" | "failed";
+  enrichment_status: "pending" | "enriched" | "failed" | "skipped";
+  enrichment_attempts: number;
+  enrichment_failed_at: string | null;
   google_maps_url: string;
+  // Enrichment data columns
+  siret: string | null;
+  dirigeant: string | null;
+  dirigeant_linkedin: string | null;
+  mx_provider: string | null;
+  has_mx: boolean;
+  enrichment_source: string | null;
+  enrichment_confidence: number | null;
+  enriched_at: string | null;
 }
 
 export interface DecisionMaker {
@@ -46,7 +57,7 @@ export interface LeadFilters {
   source: string;
 }
 
-// API response from /api/leads
+// API response from /api/leads — includes all enrichment columns from Supabase
 interface ApiLead {
   id: string;
   name: string;
@@ -63,6 +74,18 @@ interface ApiLead {
   created_at: string;
   google_maps_url: string | null;
   source: string | null;
+  // Enrichment columns from DB
+  enrichment_status: string | null;
+  enrichment_attempts: number | null;
+  enrichment_failed_at: string | null;
+  siret: string | null;
+  dirigeant: string | null;
+  dirigeant_linkedin: string | null;
+  mx_provider: string | null;
+  has_mx: boolean | null;
+  enrichment_source: string | null;
+  enrichment_confidence: number | null;
+  enriched_at: string | null;
 }
 
 interface LeadsApiResponse {
@@ -70,6 +93,21 @@ interface LeadsApiResponse {
   total: number;
   limit: number;
   offset: number;
+}
+
+/**
+ * Derive enrichment_status from DB value or heuristic fallback.
+ */
+function deriveEnrichmentStatus(api: ApiLead): Lead["enrichment_status"] {
+  // Use DB value if present and valid
+  const dbStatus = api.enrichment_status;
+  if (dbStatus === "enriched" || dbStatus === "failed" || dbStatus === "skipped" || dbStatus === "pending") {
+    return dbStatus;
+  }
+  // Fallback heuristic for leads without the column populated yet
+  if (api.enriched_at) return "enriched";
+  if (api.email) return "enriched";
+  return "pending";
 }
 
 /**
@@ -95,8 +133,19 @@ function mapApiLeadToLead(api: ApiLead): Lead {
     instantly_status: "not_imported",
     verticale: api.category || "",
     decision_makers: [],
-    enrichment_status: api.email ? "completed" : "pending",
+    enrichment_status: deriveEnrichmentStatus(api),
+    enrichment_attempts: api.enrichment_attempts ?? 0,
+    enrichment_failed_at: api.enrichment_failed_at ?? null,
     google_maps_url: api.google_maps_url || "",
+    // Enrichment data
+    siret: api.siret ?? null,
+    dirigeant: api.dirigeant ?? null,
+    dirigeant_linkedin: api.dirigeant_linkedin ?? null,
+    mx_provider: api.mx_provider ?? null,
+    has_mx: api.has_mx ?? false,
+    enrichment_source: api.enrichment_source ?? null,
+    enrichment_confidence: api.enrichment_confidence ?? null,
+    enriched_at: api.enriched_at ?? null,
   };
 }
 
@@ -112,6 +161,7 @@ export async function fetchLeads(params?: {
   hasEmail?: string;
   sortBy?: string;
   sortDir?: string;
+  enrichmentStatus?: string;
 }): Promise<{ leads: Lead[]; total: number }> {
   const searchParams = new URLSearchParams();
   if (params?.limit) searchParams.set("limit", String(params.limit));
@@ -122,6 +172,7 @@ export async function fetchLeads(params?: {
   if (params?.hasEmail) searchParams.set("hasEmail", params.hasEmail);
   if (params?.sortBy) searchParams.set("sortBy", params.sortBy);
   if (params?.sortDir) searchParams.set("sortDir", params.sortDir);
+  if (params?.enrichmentStatus) searchParams.set("enrichmentStatus", params.enrichmentStatus);
 
   const res = await fetch(`/api/leads?${searchParams.toString()}`);
   if (!res.ok) {

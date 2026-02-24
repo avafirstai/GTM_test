@@ -16,10 +16,18 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300; // 5 min for large batches
 
 /* ------------------------------------------------------------------ */
+/*  Constants                                                          */
+/* ------------------------------------------------------------------ */
+
+const BATCH_SIZE = 3;
+const LEAD_TIMEOUT_MS = 120_000; // 2 min per lead — skip if exceeded
+
+/* ------------------------------------------------------------------ */
 /*  Request body                                                       */
 /* ------------------------------------------------------------------ */
 
 interface EnrichStreamRequest {
+  // Existing (backward compat)
   category?: string;
   city?: string;
   leadIds?: string[];
@@ -28,6 +36,25 @@ interface EnrichStreamRequest {
   stopOnConfidence?: number;
   useKaspr?: boolean;
   minScoreForPaid?: number;
+  // New: multi-select filters
+  categories?: string[];
+  cities?: string[];
+}
+
+/* ------------------------------------------------------------------ */
+/*  Per-lead timeout wrapper                                           */
+/* ------------------------------------------------------------------ */
+
+function enrichWithTimeout(
+  lead: EnrichmentLeadInput,
+  config: WaterfallConfig,
+): Promise<EnrichmentPipelineResult> {
+  return Promise.race([
+    runWaterfall(lead, config),
+    new Promise<never>((_resolve, reject) =>
+      setTimeout(() => reject(new Error("LEAD_TIMEOUT")), LEAD_TIMEOUT_MS),
+    ),
+  ]);
 }
 
 /* ------------------------------------------------------------------ */
@@ -60,23 +87,49 @@ export async function POST(request: Request) {
     }));
   }
 
+  // ----------------------------------------------------------------
   // Query leads needing enrichment
+  // ONLY pending leads — failed/skipped/enriched are excluded
+  // ----------------------------------------------------------------
   let query = supabase
     .from("gtm_leads")
-    .select("id, name, website, email, phone, city, category, score")
+    .select("id, name, website, email, phone, city, category, score, enrichment_attempts")
     .not("website", "is", null)
     .neq("website", "")
     .or("email.is.null,email.eq.")
+    .eq("enrichment_status", "pending") // <-- KEY: only pending leads
     .limit(limit);
 
   if (body.leadIds && body.leadIds.length > 0) {
     query = query.in("id", body.leadIds);
   } else {
-    if (body.category) {
-      query = query.ilike("category", `%${body.category}%`);
+    // Multi-select categories (new) or single category (backward compat)
+    const cats = body.categories && body.categories.length > 0
+      ? body.categories
+      : body.category
+        ? [body.category]
+        : [];
+
+    if (cats.length === 1) {
+      query = query.ilike("category", `%${cats[0]}%`);
+    } else if (cats.length > 1) {
+      // OR filter for multiple categories
+      const orFilter = cats.map((c) => `category.ilike.%${c}%`).join(",");
+      query = query.or(orFilter);
     }
-    if (body.city) {
-      query = query.ilike("city", `%${body.city}%`);
+
+    // Multi-select cities (new) or single city (backward compat)
+    const cits = body.cities && body.cities.length > 0
+      ? body.cities
+      : body.city
+        ? [body.city]
+        : [];
+
+    if (cits.length === 1) {
+      query = query.ilike("city", `%${cits[0]}%`);
+    } else if (cits.length > 1) {
+      const orFilter = cits.map((c) => `city.ilike.%${c}%`).join(",");
+      query = query.or(orFilter);
     }
   }
 
@@ -107,8 +160,8 @@ export async function POST(request: Request) {
       config: {
         limit,
         sources: body.sources,
-        category: body.category,
-        city: body.city,
+        categories: body.categories ?? (body.category ? [body.category] : []),
+        cities: body.cities ?? (body.city ? [body.city] : []),
         useKaspr: body.useKaspr,
         stopOnConfidence: body.stopOnConfidence,
       },
@@ -152,11 +205,12 @@ export async function POST(request: Request) {
 
       try {
         // Emit job_created
-        send("job_created", { jobId });
+        send("job_created", { jobId, totalLeads: enrichmentLeads.length });
 
-        const BATCH_SIZE = 3;
         let enrichedCount = 0;
         let processedCount = 0;
+        let failedCount = 0;
+        let skippedCount = 0;
         const sourceStats: Record<
           string,
           { tried: number; emailFound: number; phoneFound: number; siretFound: number }
@@ -165,15 +219,93 @@ export async function POST(request: Request) {
 
         for (let i = 0; i < enrichmentLeads.length; i += BATCH_SIZE) {
           const batch = enrichmentLeads.slice(i, i + BATCH_SIZE);
+
+          // Emit lead_start for each lead in the batch
+          for (let b = 0; b < batch.length; b++) {
+            const lead = batch[b];
+            send("lead_start", {
+              leadId: lead.id,
+              name: lead.name,
+              website: lead.website,
+              index: i + b + 1,
+              total: enrichmentLeads.length,
+            });
+          }
+
           const batchResults = await Promise.allSettled(
-            batch.map((lead) => runWaterfall(lead, config)),
+            batch.map((lead) => enrichWithTimeout(lead, config)),
           );
 
-          for (const settled of batchResults) {
-            if (settled.status !== "fulfilled") continue;
+          for (let b = 0; b < batchResults.length; b++) {
+            const settled = batchResults[b];
+            const lead = batch[b];
+            processedCount++;
+
+            // ---------------------------------------------------
+            // Handle rejected promises (timeout or crash)
+            // ---------------------------------------------------
+            if (settled.status === "rejected") {
+              const errMsg = settled.reason instanceof Error
+                ? settled.reason.message
+                : "Unknown error";
+              const isTimeout = errMsg === "LEAD_TIMEOUT";
+              const newStatus = isTimeout ? "skipped" : "failed";
+
+              if (isTimeout) {
+                skippedCount++;
+              } else {
+                failedCount++;
+              }
+
+              // Mark lead in DB
+              const currentAttempts = (leads.find((l) => l.id === lead.id) as Record<string, unknown>)?.enrichment_attempts;
+              const attempts = (typeof currentAttempts === "number" ? currentAttempts : 0) + 1;
+
+              supabase
+                .from("gtm_leads")
+                .update({
+                  enrichment_status: newStatus,
+                  enrichment_attempts: attempts,
+                  enrichment_failed_at: new Date().toISOString(),
+                  updated_at: new Date().toISOString(),
+                })
+                .eq("id", lead.id)
+                .then(({ error: dbErr }) => {
+                  if (dbErr) {
+                    send("db_warning", {
+                      leadId: lead.id,
+                      error: dbErr.message,
+                      phase: "mark_failed",
+                    });
+                  }
+                });
+
+              send("lead_error", {
+                leadId: lead.id,
+                name: lead.name,
+                error: errMsg,
+                status: newStatus,
+              });
+
+              // Emit progress
+              const percent = Math.round((processedCount / enrichmentLeads.length) * 100);
+              send("progress", {
+                processed: processedCount,
+                total: enrichmentLeads.length,
+                enriched: enrichedCount,
+                failed: failedCount,
+                skipped: skippedCount,
+                percent,
+              });
+
+              continue;
+            }
+
+            // ---------------------------------------------------
+            // Handle fulfilled promises
+            // ---------------------------------------------------
             const result = settled.value;
             allResults.push(result);
-            processedCount++;
 
             // Update source stats
             for (const sr of result.allResults) {
@@ -191,11 +323,23 @@ export async function POST(request: Request) {
               if (sr.siret) sourceStats[sr.source].siretFound++;
             }
 
-            // Update Supabase with best results
-            if (result.bestEmail || result.bestPhone || result.siret || result.dirigeant) {
+            // Determine enrichment outcome
+            const foundSomething = !!(result.bestEmail || result.bestPhone || result.siret || result.dirigeant);
+            const currentAttempts2 = (leads.find((l) => l.id === result.leadId) as Record<string, unknown>)?.enrichment_attempts;
+            const attempts2 = (typeof currentAttempts2 === "number" ? currentAttempts2 : 0) + 1;
+
+            if (foundSomething) {
               enrichedCount++;
 
-              const updateData: Record<string, unknown> = {};
+              const updateData: Record<string, unknown> = {
+                enrichment_status: "enriched",
+                enrichment_attempts: attempts2,
+                enrichment_source: result.sourcesTried.join(","),
+                enrichment_confidence: result.finalConfidence,
+                enriched_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+              };
+
               if (result.bestEmail) updateData.email = result.bestEmail;
               if (result.bestPhone) updateData.phone = result.bestPhone;
               if (result.siret) updateData.siret = result.siret;
@@ -203,38 +347,71 @@ export async function POST(request: Request) {
               if (result.dirigeantLinkedin) updateData.dirigeant_linkedin = result.dirigeantLinkedin;
               if (result.mxProvider) updateData.mx_provider = result.mxProvider;
               updateData.has_mx = result.hasMx;
-              updateData.enrichment_source = result.sourcesTried.join(",");
-              updateData.enrichment_confidence = result.finalConfidence;
-              updateData.enriched_at = new Date().toISOString();
 
-              await supabase
+              supabase
                 .from("gtm_leads")
                 .update(updateData)
-                .eq("id", result.leadId);
+                .eq("id", result.leadId)
+                .then(({ error: dbErr }) => {
+                  if (dbErr) {
+                    send("db_warning", {
+                      leadId: result.leadId,
+                      error: dbErr.message,
+                      phase: "save_enriched",
+                    });
+                  }
+                });
+            } else {
+              // Nothing found — mark as failed
+              failedCount++;
+
+              supabase
+                .from("gtm_leads")
+                .update({
+                  enrichment_status: "failed",
+                  enrichment_attempts: attempts2,
+                  enrichment_failed_at: new Date().toISOString(),
+                  enrichment_source: result.sourcesTried.join(","),
+                  updated_at: new Date().toISOString(),
+                })
+                .eq("id", result.leadId)
+                .then(({ error: dbErr }) => {
+                  if (dbErr) {
+                    send("db_warning", {
+                      leadId: result.leadId,
+                      error: dbErr.message,
+                      phase: "mark_failed",
+                    });
+                  }
+                });
             }
 
             // Emit lead result
-            send("lead_result", {
+            send("lead_done", {
               leadId: result.leadId,
-              bestEmail: result.bestEmail,
-              bestPhone: result.bestPhone,
-              dirigeant: result.dirigeant,
-              siret: result.siret,
+              name: lead.name,
+              status: foundSomething ? "enriched" : "failed",
+              bestEmail: result.bestEmail ?? null,
+              bestPhone: result.bestPhone ?? null,
+              dirigeant: result.dirigeant ?? null,
+              siret: result.siret ?? null,
               confidence: result.finalConfidence,
               sourcesTried: result.sourcesTried,
             });
+
+            // Emit progress after each lead
+            const percent = Math.round((processedCount / enrichmentLeads.length) * 100);
+            send("progress", {
+              processed: processedCount,
+              total: enrichmentLeads.length,
+              enriched: enrichedCount,
+              failed: failedCount,
+              skipped: skippedCount,
+              percent,
+            });
           }
 
-          // Emit progress after each batch
-          const percent = Math.round((processedCount / enrichmentLeads.length) * 100);
-          send("progress", {
-            processed: processedCount,
-            total: enrichmentLeads.length,
-            enriched: enrichedCount,
-            percent,
-          });
-
-          // Update job progress in DB (fire-and-forget)
+          // Update job progress in DB (fire-and-forget with error handling)
           supabase
             .from("gtm_enrichment_jobs")
             .update({
@@ -243,7 +420,14 @@ export async function POST(request: Request) {
               updated_at: new Date().toISOString(),
             })
             .eq("id", jobId)
-            .then(() => {});
+            .then(({ error: dbErr }) => {
+              if (dbErr) {
+                send("db_warning", {
+                  error: dbErr.message,
+                  phase: "job_progress",
+                });
+              }
+            });
         }
 
         // Build summary
@@ -294,10 +478,12 @@ export async function POST(request: Request) {
           })
           .eq("id", jobId);
 
-        // Emit done
+        // Emit done with full stats
         send("done", {
           processed: processedCount,
           enriched: enrichedCount,
+          failed: failedCount,
+          skipped: skippedCount,
           summary,
           sourceStats,
         });

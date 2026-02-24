@@ -770,10 +770,12 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
                     <PipelineBadge status={lead.statut_pipeline} />
                   </td>
                   <td className="px-3 py-3 text-center">
-                    {lead.enrichment_status === "completed" ? (
+                    {lead.enrichment_status === "enriched" ? (
                       <span style={{ color: "var(--green)" }}>&#10003;</span>
-                    ) : lead.enrichment_status === "in_progress" ? (
-                      <span className="animate-spin inline-block">&#x21BB;</span>
+                    ) : lead.enrichment_status === "failed" ? (
+                      <span style={{ color: "#ef4444" }} title="Enrichissement echoue">&#10007;</span>
+                    ) : lead.enrichment_status === "skipped" ? (
+                      <span style={{ color: "#f59e0b" }} title="Timeout / skip">&#x23F1;</span>
                     ) : (
                       <span style={{ color: "var(--text-muted)" }}>&mdash;</span>
                     )}

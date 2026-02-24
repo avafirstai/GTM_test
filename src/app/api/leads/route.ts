@@ -14,11 +14,12 @@ export async function GET(request: Request) {
   const city = searchParams.get("city") || "";
   const category = searchParams.get("category") || "";
   const hasEmail = searchParams.get("hasEmail") || "";
+  const enrichmentStatus = searchParams.get("enrichmentStatus") || "";
 
   let query = supabase
     .from("gtm_leads")
     .select(
-      "id, name, city, phone, website, email, category, rating, reviews, score, address, apify_run, created_at, siret, dirigeant, dirigeant_linkedin, mx_provider, has_mx, enrichment_source, enrichment_confidence, enriched_at, google_maps_url, source",
+      "id, name, city, phone, website, email, category, rating, reviews, score, address, apify_run, created_at, siret, dirigeant, dirigeant_linkedin, mx_provider, has_mx, enrichment_source, enrichment_confidence, enriched_at, enrichment_status, enrichment_attempts, enrichment_failed_at, google_maps_url, source",
       { count: "exact" }
     );
 
@@ -41,6 +42,12 @@ export async function GET(request: Request) {
     query = query.not("email", "is", null).neq("email", "");
   } else if (hasEmail === "no") {
     query = query.or("email.is.null,email.eq.");
+  }
+  if (enrichmentStatus) {
+    const allowedStatuses = ["pending", "enriched", "failed", "skipped"];
+    if (allowedStatuses.includes(enrichmentStatus)) {
+      query = query.eq("enrichment_status", enrichmentStatus);
+    }
   }
 
   // Sort — only allow safe column names

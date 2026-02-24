@@ -63,12 +63,23 @@ interface SourceHealth {
 
 interface EnrichResultItem {
   leadId: string;
+  name?: string;
+  status?: "enriched" | "failed" | "skipped";
   bestEmail: string | null;
   bestPhone: string | null;
   dirigeant: string | null;
   siret: string | null;
   confidence: number;
   sourcesTried: string[];
+  error?: string;
+}
+
+interface CurrentLead {
+  leadId: string;
+  name: string;
+  website: string;
+  index: number;
+  total: number;
 }
 
 interface EnrichSummary {
@@ -135,6 +146,10 @@ function safeLeadResult(raw: unknown): EnrichResultItem | null {
   if (typeof obj.leadId !== "string") return null;
   return {
     leadId: obj.leadId,
+    name: typeof obj.name === "string" ? obj.name : undefined,
+    status: (obj.status === "enriched" || obj.status === "failed" || obj.status === "skipped")
+      ? obj.status as "enriched" | "failed" | "skipped"
+      : undefined,
     bestEmail: typeof obj.bestEmail === "string" ? obj.bestEmail : null,
     bestPhone: typeof obj.bestPhone === "string" ? obj.bestPhone : null,
     dirigeant: typeof obj.dirigeant === "string" ? obj.dirigeant : null,
@@ -191,16 +206,22 @@ export default function EnrichmentPage() {
   const [enrichLimit, setEnrichLimit] = useState(20);
   const [stopOnConfidence, setStopOnConfidence] = useState(80);
 
+  // Multi-select filters
+  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+  const [selectedCities, setSelectedCities] = useState<string[]>([]);
+
   // Run state
   const [status, setStatus] = useState<RunStatus>("idle");
   const [jobId, setJobId] = useState<string | null>(null);
   const [target, setTarget] = useState("");
-  const [progress, setProgress] = useState({ processed: 0, total: 0, enriched: 0, percent: 0 });
+  const [progress, setProgress] = useState({ processed: 0, total: 0, enriched: 0, failed: 0, skipped: 0, percent: 0 });
+  const [currentLead, setCurrentLead] = useState<CurrentLead | null>(null);
   const [leadResults, setLeadResults] = useState<EnrichResultItem[]>([]);
   const [summary, setSummary] = useState<EnrichSummary | null>(null);
   const [sourceStats, setSourceStats] = useState<Record<string, SourceStat> | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
+  const [jobStartTime, setJobStartTime] = useState<string | null>(null);
 
   // Source health
   const [sourceHealth, setSourceHealth] = useState<SourceHealth[]>([]);
@@ -269,6 +290,8 @@ export default function EnrichmentPage() {
             processed: runningJob.progress_processed,
             total: runningJob.progress_total,
             enriched: runningJob.progress_enriched,
+            failed: 0,
+            skipped: 0,
             percent: runningJob.progress_total > 0
               ? Math.round((runningJob.progress_processed / runningJob.progress_total) * 100)
               : 0,
@@ -299,10 +322,16 @@ export default function EnrichmentPage() {
   function restoreFromJob(job: EnrichJob) {
     setJobId(job.id);
     setStatus("done");
+    // Derive failed/skipped from lead_results if available
+    const parsedResultsForCounts = safeLeadResults(job.lead_results);
+    const failedFromResults = parsedResultsForCounts.filter((r) => r.status === "failed").length;
+    const skippedFromResults = parsedResultsForCounts.filter((r) => r.status === "skipped").length;
     setProgress({
       processed: job.progress_processed ?? 0,
       total: job.progress_total ?? 0,
       enriched: job.progress_enriched ?? 0,
+      failed: failedFromResults,
+      skipped: skippedFromResults,
       percent: 100,
     });
     const parsedSummary = safeSummary(job.summary);
@@ -339,14 +368,16 @@ export default function EnrichmentPage() {
         if (!d.success) return;
 
         const job = d.job as EnrichJob;
-        setProgress({
+        setProgress((prev) => ({
           processed: job.progress_processed,
           total: job.progress_total,
           enriched: job.progress_enriched,
+          failed: prev.failed,
+          skipped: prev.skipped,
           percent: job.progress_total > 0
             ? Math.round((job.progress_processed / job.progress_total) * 100)
             : 0,
-        });
+        }));
 
         if (job.status === "completed") {
           if (pollRef.current) clearInterval(pollRef.current);
@@ -408,16 +439,18 @@ export default function EnrichmentPage() {
   /* ---------------------------------------------------------------- */
 
   const runEnrich = useCallback(
-    async (opts: { category?: string; city?: string; label: string }) => {
+    async (opts: { category?: string; city?: string; categories?: string[]; cities?: string[]; label: string }) => {
       // Reset state
       setStatus("running");
       setTarget(opts.label);
-      setProgress({ processed: 0, total: 0, enriched: 0, percent: 0 });
+      setProgress({ processed: 0, total: 0, enriched: 0, failed: 0, skipped: 0, percent: 0 });
+      setCurrentLead(null);
       setLeadResults([]);
       setSummary(null);
       setSourceStats(null);
       setErrorMsg(null);
       setJobId(null);
+      setJobStartTime(new Date().toISOString());
       latestJobIdRef.current = null;
       startTimer();
 
@@ -435,22 +468,23 @@ export default function EnrichmentPage() {
           body: JSON.stringify({
             category: opts.category,
             city: opts.city,
+            categories: opts.categories,
+            cities: opts.cities,
             limit: enrichLimit,
             sources: enabledSources,
             stopOnConfidence,
             useKaspr,
-            minScoreForPaid: 0, // Kaspr for all leads (unlimited plan)
+            minScoreForPaid: 0,
           }),
         });
 
         if (!res.ok || !res.body) {
-          // Fallback: non-streaming response
           const data = await res.json();
           stopTimer();
           if (data.success && data.processed === 0) {
             setStatus("done");
             setSummary(null);
-            setProgress({ processed: 0, total: 0, enriched: 0, percent: 100 });
+            setProgress({ processed: 0, total: 0, enriched: 0, failed: 0, skipped: 0, percent: 100 });
             return;
           }
           setStatus("error");
@@ -476,29 +510,65 @@ export default function EnrichmentPage() {
                 const jid = typeof data.jobId === "string" ? data.jobId : null;
                 setJobId(jid);
                 latestJobIdRef.current = jid;
+              } else if (eventType === "lead_start") {
+                setCurrentLead({
+                  leadId: data.leadId as string,
+                  name: data.name as string,
+                  website: data.website as string,
+                  index: data.index as number,
+                  total: data.total as number,
+                });
+              } else if (eventType === "lead_done") {
+                setCurrentLead(null);
+                const parsed = safeLeadResult(data);
+                if (parsed) setLeadResults((prev) => [...prev, parsed]);
+              } else if (eventType === "lead_error") {
+                setCurrentLead(null);
+                const errItem: EnrichResultItem = {
+                  leadId: data.leadId as string,
+                  name: data.name as string,
+                  status: data.status as "failed" | "skipped",
+                  bestEmail: null,
+                  bestPhone: null,
+                  dirigeant: null,
+                  siret: null,
+                  confidence: 0,
+                  sourcesTried: [],
+                  error: data.error as string,
+                };
+                setLeadResults((prev) => [...prev, errItem]);
               } else if (eventType === "progress") {
                 setProgress({
                   processed: data.processed as number,
                   total: data.total as number,
                   enriched: data.enriched as number,
+                  failed: (data.failed as number) ?? 0,
+                  skipped: (data.skipped as number) ?? 0,
                   percent: data.percent as number,
                 });
               } else if (eventType === "lead_result") {
+                // Backward compat for old SSE events
                 const parsed = safeLeadResult(data);
                 if (parsed) setLeadResults((prev) => [...prev, parsed]);
               } else if (eventType === "done") {
                 stopTimer();
                 setStatus("done");
-                // Clear ref so post-stream code doesn't start polling after a clean finish
+                setCurrentLead(null);
                 latestJobIdRef.current = null;
                 const parsedSummary = safeSummary(data.summary);
                 if (parsedSummary) setSummary(parsedSummary);
                 const parsedStats = safeSourceStats(data.sourceStats);
                 if (parsedStats) setSourceStats(parsedStats);
-                setProgress((prev) => ({ ...prev, percent: 100 }));
+                setProgress((prev) => ({
+                  ...prev,
+                  percent: 100,
+                  failed: (data.failed as number) ?? prev.failed,
+                  skipped: (data.skipped as number) ?? prev.skipped,
+                }));
               } else if (eventType === "error") {
                 stopTimer();
                 setStatus("error");
+                setCurrentLead(null);
                 latestJobIdRef.current = null;
                 setErrorMsg((data as { message: string }).message);
               }
@@ -508,8 +578,6 @@ export default function EnrichmentPage() {
           });
         }
 
-        // If stream ended without a "done" event, start polling as fallback
-        // Use ref instead of stale closure values (status/jobId are captured at call time)
         const currentJobIdAfterStream = latestJobIdRef.current;
         if (currentJobIdAfterStream) {
           startPolling(currentJobIdAfterStream);
@@ -518,8 +586,6 @@ export default function EnrichmentPage() {
         if ((err as Error).name === "AbortError") return;
         stopTimer();
 
-        // If we have a jobId, start polling (server may still be processing)
-        // Use ref — closure jobId is stale (still null from setJobId batching)
         const currentJobIdOnError = latestJobIdRef.current;
         if (currentJobIdOnError) {
           startPolling(currentJobIdOnError);
@@ -534,8 +600,15 @@ export default function EnrichmentPage() {
   );
 
   const runEnrichAll = useCallback(() => {
-    runEnrich({ label: "Tous les leads sans email" });
-  }, [runEnrich]);
+    const label = selectedCategories.length > 0 || selectedCities.length > 0
+      ? `Filtré: ${[...selectedCategories, ...selectedCities].join(", ")}`
+      : "Tous les leads sans email";
+    runEnrich({
+      categories: selectedCategories.length > 0 ? selectedCategories : undefined,
+      cities: selectedCities.length > 0 ? selectedCities : undefined,
+      label,
+    });
+  }, [runEnrich, selectedCategories, selectedCities]);
 
   /* ---------------------------------------------------------------- */
   /*  Loading state                                                    */
@@ -708,10 +781,112 @@ export default function EnrichmentPage() {
             </div>
           )}
 
+          {/* Multi-Select Filters */}
+          <div className="mt-5 pt-4 border-t border-[var(--border)]">
+            <div className="flex items-center gap-2 mb-3">
+              <Search size={13} style={{ color: "var(--text-muted)" }} />
+              <span className="text-[11px] font-medium" style={{ color: "var(--text-secondary)" }}>
+                Filtrer les leads a enrichir
+              </span>
+              <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+                (optionnel — vide = tous les leads pending)
+              </span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
+              {/* Category multi-select */}
+              <div>
+                <label className="text-[10px] font-medium mb-1 block" style={{ color: "var(--text-muted)" }}>Categories / Niches</label>
+                <div className="flex flex-wrap gap-1.5 p-2 rounded-lg max-h-28 overflow-y-auto" style={{ background: "var(--bg)", border: "1px solid var(--border)" }}>
+                  {categoryEmailRates.length === 0 && (
+                    <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>Aucune categorie</span>
+                  )}
+                  {categoryEmailRates.map((cat) => {
+                    const selected = selectedCategories.includes(cat.name);
+                    return (
+                      <button
+                        key={cat.name}
+                        type="button"
+                        onClick={() => {
+                          setSelectedCategories((prev) =>
+                            selected ? prev.filter((c) => c !== cat.name) : [...prev, cat.name]
+                          );
+                        }}
+                        className="text-[10px] px-2 py-1 rounded-md transition-all"
+                        style={{
+                          background: selected ? "var(--accent)" : "var(--bg-hover)",
+                          color: selected ? "white" : "var(--text-secondary)",
+                          border: selected ? "1px solid var(--accent)" : "1px solid transparent",
+                        }}
+                      >
+                        {cat.name} ({cat.total - cat.withEmail})
+                      </button>
+                    );
+                  })}
+                </div>
+                {selectedCategories.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCategories([])}
+                    className="text-[9px] mt-1"
+                    style={{ color: "var(--accent-hover)" }}
+                  >
+                    Effacer ({selectedCategories.length})
+                  </button>
+                )}
+              </div>
+              {/* City multi-select */}
+              <div>
+                <label className="text-[10px] font-medium mb-1 block" style={{ color: "var(--text-muted)" }}>Villes</label>
+                <div className="flex flex-wrap gap-1.5 p-2 rounded-lg max-h-28 overflow-y-auto" style={{ background: "var(--bg)", border: "1px solid var(--border)" }}>
+                  {cityEmailRates.length === 0 && (
+                    <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>Aucune ville</span>
+                  )}
+                  {cityEmailRates.map((city) => {
+                    const selected = selectedCities.includes(city.name);
+                    return (
+                      <button
+                        key={city.name}
+                        type="button"
+                        onClick={() => {
+                          setSelectedCities((prev) =>
+                            selected ? prev.filter((c) => c !== city.name) : [...prev, city.name]
+                          );
+                        }}
+                        className="text-[10px] px-2 py-1 rounded-md transition-all"
+                        style={{
+                          background: selected ? "var(--accent)" : "var(--bg-hover)",
+                          color: selected ? "white" : "var(--text-secondary)",
+                          border: selected ? "1px solid var(--accent)" : "1px solid transparent",
+                        }}
+                      >
+                        {city.name} ({city.total - city.withEmail})
+                      </button>
+                    );
+                  })}
+                </div>
+                {selectedCities.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCities([])}
+                    className="text-[9px] mt-1"
+                    style={{ color: "var(--accent-hover)" }}
+                  >
+                    Effacer ({selectedCities.length})
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
           {/* Run Buttons */}
-          <div className="flex items-center justify-between mt-5 pt-4 border-t border-[var(--border)]">
+          <div className="flex items-center justify-between pt-3 border-t border-[var(--border)]">
             <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>
               {enabledCount} sources actives &middot; {(stats.withWebsite - stats.withEmail).toLocaleString()} leads avec site web sans email
+              {(selectedCategories.length > 0 || selectedCities.length > 0) && (
+                <span style={{ color: "var(--accent-hover)" }}>
+                  {" "}&middot; Filtre: {[...selectedCategories, ...selectedCities].join(", ")}
+                </span>
+              )}
             </div>
             <button
               onClick={runEnrichAll}
@@ -743,14 +918,43 @@ export default function EnrichmentPage() {
               {target}
             </span>
           </div>
-          <div className="flex items-center gap-4 text-[11px]" style={{ color: "var(--text-muted)" }}>
+
+          {/* Current lead being processed */}
+          {currentLead && (
+            <div
+              className="mb-3 px-3 py-2 rounded-lg flex items-center gap-3"
+              style={{ background: "rgba(99,102,241,0.06)", border: "1px solid rgba(99,102,241,0.15)" }}
+            >
+              <Loader2 size={12} className="animate-spin shrink-0" style={{ color: "var(--accent)" }} />
+              <div className="min-w-0 flex-1">
+                <div className="text-[11px] font-medium truncate" style={{ color: "var(--text-primary)" }}>
+                  {currentLead.name}
+                </div>
+                <div className="text-[10px] truncate" style={{ color: "var(--text-muted)" }}>
+                  {currentLead.website}
+                </div>
+              </div>
+              <span className="text-[10px] font-mono shrink-0" style={{ color: "var(--accent)" }}>
+                {currentLead.index}/{currentLead.total}
+              </span>
+            </div>
+          )}
+
+          <div className="flex items-center gap-4 text-[11px] flex-wrap" style={{ color: "var(--text-muted)" }}>
             <span className="flex items-center gap-1">
               <Clock size={11} /> {(elapsedMs / 1000).toFixed(1)}s
             </span>
             <span>{progress.processed}/{progress.total} traites</span>
-            <span>{progress.enriched} enrichis</span>
+            <span style={{ color: "#22c55e" }}>{progress.enriched} enrichis</span>
+            {progress.failed > 0 && (
+              <span style={{ color: "#ef4444" }}>{progress.failed} echoues</span>
+            )}
+            {progress.skipped > 0 && (
+              <span style={{ color: "#f59e0b" }}>{progress.skipped} skipped</span>
+            )}
             <span>{progress.percent}%</span>
           </div>
+
           {/* Real progress bar */}
           <div className="mt-3 h-1.5 rounded-full overflow-hidden" style={{ background: "var(--bg)" }}>
             <div
@@ -761,16 +965,25 @@ export default function EnrichmentPage() {
               }}
             />
           </div>
+
           {/* Live lead results feed */}
           {leadResults.length > 0 && (
-            <div className="mt-3 max-h-32 overflow-y-auto space-y-1">
-              {leadResults.slice(-5).map((r) => (
+            <div className="mt-3 max-h-40 overflow-y-auto space-y-1">
+              {leadResults.slice(-8).map((r) => (
                 <div key={r.leadId} className="text-[10px] flex items-center gap-2" style={{ color: "var(--text-muted)" }}>
-                  <span className="font-mono">{r.leadId.slice(0, 8)}</span>
+                  {r.status === "failed" || r.status === "skipped" ? (
+                    <AlertTriangle size={10} style={{ color: r.status === "skipped" ? "#f59e0b" : "#ef4444" }} />
+                  ) : r.bestEmail ? (
+                    <CheckCircle size={10} style={{ color: "#22c55e" }} />
+                  ) : (
+                    <CircleDot size={10} style={{ color: "var(--text-muted)" }} />
+                  )}
+                  <span className="font-medium truncate max-w-[120px]">{r.name || r.leadId.slice(0, 8)}</span>
                   {r.bestEmail && <span style={{ color: "#22c55e" }}>{r.bestEmail}</span>}
                   {r.bestPhone && <span style={{ color: "#3b82f6" }}>{r.bestPhone}</span>}
-                  {!r.bestEmail && !r.bestPhone && <span>aucun resultat</span>}
-                  <span className="ml-auto">{r.confidence}%</span>
+                  {r.error && <span style={{ color: "#ef4444" }}>{r.error}</span>}
+                  {!r.bestEmail && !r.bestPhone && !r.error && <span>aucun resultat</span>}
+                  <span className="ml-auto">{r.confidence > 0 ? `${r.confidence}%` : ""}</span>
                 </div>
               ))}
             </div>
@@ -783,15 +996,29 @@ export default function EnrichmentPage() {
         <div className="rounded-xl border border-[var(--border)] mb-6" style={{ background: "var(--bg-raised)" }}>
           {/* Summary Header */}
           <div className="p-5 border-b border-[var(--border)]">
-            <div className="flex items-center gap-3 mb-4">
-              <CheckCircle size={18} style={{ color: "var(--green)" }} />
-              <span className="text-sm font-semibold" style={{ color: "var(--green)" }}>
-                Enrichissement termine
-              </span>
-              <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-                {progress.processed} traites &middot; {progress.enriched} enrichis
-                {summary.avgDurationMs > 0 && ` \u00b7 ${(summary.avgDurationMs / 1000).toFixed(1)}s en moyenne`}
-              </span>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <CheckCircle size={18} style={{ color: "var(--green)" }} />
+                <span className="text-sm font-semibold" style={{ color: "var(--green)" }}>
+                  Enrichissement termine
+                </span>
+                <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+                  {progress.processed} traites &middot; {progress.enriched} enrichis
+                  {progress.failed > 0 && ` \u00b7 ${progress.failed} echoues`}
+                  {progress.skipped > 0 && ` \u00b7 ${progress.skipped} skipped`}
+                  {summary.avgDurationMs > 0 && ` \u00b7 ${(summary.avgDurationMs / 1000).toFixed(1)}s en moyenne`}
+                </span>
+              </div>
+              {progress.enriched > 0 && (
+                <a
+                  href={`/leads?hasEmail=yes${jobStartTime ? `&enriched_after=${encodeURIComponent(jobStartTime)}` : ""}`}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
+                  style={{ background: "var(--green-subtle)", color: "var(--green)", border: "1px solid rgba(34,197,94,0.2)" }}
+                >
+                  <ExternalLink size={11} />
+                  Voir les {progress.enriched} leads enrichis
+                </a>
+              )}
             </div>
 
             {/* Stats Cards */}
@@ -897,12 +1124,27 @@ export default function EnrichmentPage() {
                     <div
                       key={r.leadId}
                       className="rounded-lg px-3 py-2.5 text-[11px]"
-                      style={{ background: "var(--bg)", border: "1px solid var(--border)" }}
+                      style={{
+                        background: r.status === "failed" ? "rgba(239,68,68,0.03)" : r.status === "skipped" ? "rgba(245,158,11,0.03)" : "var(--bg)",
+                        border: r.status === "failed" ? "1px solid rgba(239,68,68,0.15)" : r.status === "skipped" ? "1px solid rgba(245,158,11,0.15)" : "1px solid var(--border)",
+                      }}
                     >
                       <div className="flex items-center gap-3 mb-1.5 flex-wrap">
-                        <span className="font-mono text-[10px]" style={{ color: "var(--text-muted)" }}>
-                          {r.leadId.slice(0, 8)}
+                        {r.status === "failed" ? (
+                          <AlertTriangle size={11} style={{ color: "#ef4444" }} />
+                        ) : r.status === "skipped" ? (
+                          <Clock size={11} style={{ color: "#f59e0b" }} />
+                        ) : (
+                          <CheckCircle size={11} style={{ color: "#22c55e" }} />
+                        )}
+                        <span className="font-medium" style={{ color: "var(--text-primary)" }}>
+                          {r.name || r.leadId.slice(0, 8)}
                         </span>
+                        {r.error && (
+                          <span className="text-[10px]" style={{ color: "#ef4444" }}>
+                            {r.error}
+                          </span>
+                        )}
                         {r.bestEmail && (
                           <span className="flex items-center gap-1" style={{ color: "var(--green)" }}>
                             <Mail size={10} /> {r.bestEmail}
