@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
-import { ChevronDown, X, Loader2, UserSearch, Linkedin, Mail as MailIcon, Shield } from "lucide-react";
+import { ChevronDown, X, Loader2, UserSearch, Linkedin, Mail as MailIcon, Shield, MapPin } from "lucide-react";
 import type { Lead, DecisionMaker, SortField, SortDirection, LeadFilters } from "@/lib/leads-data";
 
 interface LeadsTableProps {
@@ -821,6 +821,21 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
                             <p>
                               <span style={{ color: "var(--text-muted)" }}>Source:</span> {lead.source}
                             </p>
+                            {lead.google_maps_url && (
+                              <p className="flex items-center gap-1">
+                                <MapPin size={12} style={{ color: "var(--text-muted)" }} />
+                                <a
+                                  href={lead.google_maps_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{ color: "var(--accent-hover)" }}
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="text-xs hover:underline"
+                                >
+                                  Voir sur Google Maps
+                                </a>
+                              </p>
+                            )}
                           </div>
                         </div>
                         {/* Pitch */}

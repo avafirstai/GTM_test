@@ -21,6 +21,7 @@ export interface Lead {
   verticale: string;
   decision_makers: DecisionMaker[];
   enrichment_status: "pending" | "in_progress" | "completed" | "failed";
+  google_maps_url: string;
 }
 
 export interface DecisionMaker {
@@ -60,6 +61,8 @@ interface ApiLead {
   address: string;
   apify_run: string;
   created_at: string;
+  google_maps_url: string | null;
+  source: string | null;
 }
 
 interface LeadsApiResponse {
@@ -88,11 +91,12 @@ function mapApiLeadToLead(api: ApiLead): Lead {
     pitch_angle: "",
     statut_pipeline: "nouveau",
     date_scraping: api.created_at || new Date().toISOString(),
-    source: "Google Maps Scraping",
+    source: api.source || "Google Maps Scraping",
     instantly_status: "not_imported",
     verticale: api.category || "",
     decision_makers: [],
     enrichment_status: api.email ? "completed" : "pending",
+    google_maps_url: api.google_maps_url || "",
   };
 }
 

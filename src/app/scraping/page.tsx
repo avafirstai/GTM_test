@@ -291,6 +291,21 @@ export default function ScrapingPage() {
 
   const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
+  /** Build /leads URL with verticale + ville query params for filtering */
+  function buildLeadsUrl(vertIds: string[], villes: string[]): string {
+    const params = new URLSearchParams();
+    // Map verticaleIds → verticale names for the leads filter
+    for (const vId of vertIds) {
+      const vert = VERTICALES.find((v) => v.id === vId);
+      if (vert) params.append("verticale", vert.name);
+    }
+    for (const ville of villes) {
+      params.append("ville", ville);
+    }
+    const qs = params.toString();
+    return qs ? `/leads?${qs}` : "/leads";
+  }
+
   return (
     <div className="p-8 max-w-6xl mx-auto">
       {/* Header */}
@@ -529,7 +544,7 @@ export default function ScrapingPage() {
           {status === "done" && (
             <div className="flex gap-3">
               <a
-                href="/leads"
+                href={buildLeadsUrl(Array.from(selectedVerts), Array.from(selectedVilles))}
                 className="flex-1 flex items-center justify-center gap-2 px-5 py-3 rounded-xl text-sm font-semibold text-white transition-all hover:opacity-90"
                 style={{ background: "var(--accent)" }}
               >
@@ -771,6 +786,20 @@ function HistoryRow({ job }: { job: ScrapingJob }) {
         ? "var(--amber)"
         : "var(--red)";
 
+  // Build filtered leads URL from job verticale_ids + villes
+  const leadsUrl = (() => {
+    const params = new URLSearchParams();
+    for (const vId of job.verticale_ids ?? []) {
+      const vert = VERTICALES.find((v) => v.id === vId);
+      if (vert) params.append("verticale", vert.name);
+    }
+    for (const ville of job.villes ?? []) {
+      params.append("ville", ville);
+    }
+    const qs = params.toString();
+    return qs ? `/leads?${qs}` : "/leads";
+  })();
+
   return (
     <div className="px-5 py-3 flex items-center justify-between">
       <div>
@@ -790,6 +819,15 @@ function HistoryRow({ job }: { job: ScrapingJob }) {
             leads
           </p>
         </div>
+        {job.status === "completed" && (job.total_new_leads ?? 0) > 0 && (
+          <a
+            href={leadsUrl}
+            className="flex items-center gap-1 text-[11px] font-medium px-2.5 py-1.5 rounded-lg transition-all hover:opacity-80"
+            style={{ background: "var(--accent-subtle)", color: "var(--accent)" }}
+          >
+            Voir <ArrowRight size={12} />
+          </a>
+        )}
         <div className="flex items-center gap-1.5">
           <StatusIcon size={14} style={{ color: statusColor }} />
           <span className="text-[11px] font-medium" style={{ color: statusColor }}>
