@@ -6,7 +6,9 @@ import {
   type OrchestrateBody,
   type InstantlyCampaignResponse,
   type InstantlyBulkResponse,
+  VERTICALE_CATEGORIES,
 } from "@/lib/lead-utils";
+import { supabase } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
 
@@ -112,6 +114,33 @@ export async function POST(request: Request) {
         }
 
         if (!rawLeads || rawLeads.length === 0) {
+          // Diagnostic: count leads WITHOUT email filter to explain WHY 0
+          let diagnostic: { reason: string; totalLeadsMatchingFilters: number } | undefined;
+          try {
+            let diagQuery = supabase
+              .from("gtm_leads")
+              .select("id", { count: "exact", head: true });
+            if (ville) diagQuery = diagQuery.ilike("city", `%${ville}%`);
+            if (niche) {
+              const categories = VERTICALE_CATEGORIES[niche];
+              if (categories && categories.length > 0) {
+                const orFilter = categories.map((cat) => `category.ilike.%${cat}%`).join(",");
+                diagQuery = diagQuery.or(orFilter);
+              } else {
+                diagQuery = diagQuery.ilike("category", `%${niche}%`);
+              }
+            }
+            const { count: matchCount } = await diagQuery;
+            const total = matchCount ?? 0;
+            if (total > 0) {
+              diagnostic = { reason: "leads_exist_but_no_email", totalLeadsMatchingFilters: total };
+            } else {
+              diagnostic = { reason: "no_leads_match_filters", totalLeadsMatchingFilters: 0 };
+            }
+          } catch {
+            // diagnostic is best-effort, don't block
+          }
+
           send("done", {
             success: true,
             campaign: { id: campaignId },
@@ -121,8 +150,11 @@ export async function POST(request: Request) {
             skippedInvalid: 0,
             skippedDuplicate: 0,
             campaignLaunched: false,
-            message: "Aucun lead avec email trouvé pour ces filtres",
+            message: diagnostic?.reason === "leads_exist_but_no_email"
+              ? `${diagnostic.totalLeadsMatchingFilters} leads trouvés mais aucun n'a d'email. Enrichissez d'abord.`
+              : "Aucun lead trouvé pour cette combinaison ville/niche.",
             filters: { ville, niche, count },
+            diagnostic,
           });
           controller.close();
           return;
