@@ -17,15 +17,6 @@ interface ScrapeStreamRequest {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Helpers                                                            */
-/* ------------------------------------------------------------------ */
-
-function mapVerticaleCategory(verticaleId: string): string {
-  const v = VERTICALES.find((v) => v.id === verticaleId);
-  return v?.name ?? verticaleId;
-}
-
-/* ------------------------------------------------------------------ */
 /*  POST /api/scrape/stream — SSE streaming scraping                   */
 /* ------------------------------------------------------------------ */
 
@@ -54,8 +45,19 @@ export async function POST(request: Request) {
     );
   }
 
-  // Validate verticaleIds exist
-  const validVertIds = new Set(VERTICALES.map((v) => v.id));
+  // Fetch custom verticales and villes from Supabase to allow user-added entries
+  const [customVertRes, customVilleRes] = await Promise.all([
+    supabase.from("gtm_custom_verticales").select("id, name, emoji, google_maps_categories"),
+    supabase.from("gtm_custom_villes").select("name"),
+  ]);
+  const customVerticales = customVertRes.data ?? [];
+  const customVilleNames = (customVilleRes.data ?? []).map((v: { name: string }) => v.name);
+
+  // Validate verticaleIds — accept both built-in and custom
+  const validVertIds = new Set([
+    ...VERTICALES.map((v) => v.id),
+    ...customVerticales.map((cv: { id: string }) => cv.id),
+  ]);
   const invalidVerts = body.verticaleIds.filter((id) => !validVertIds.has(id));
   if (invalidVerts.length > 0) {
     return new Response(
@@ -64,8 +66,8 @@ export async function POST(request: Request) {
     );
   }
 
-  // Validate villes exist
-  const validVilles = new Set(VILLES_FRANCE);
+  // Validate villes — accept both built-in and custom
+  const validVilles = new Set([...VILLES_FRANCE, ...customVilleNames]);
   const invalidVilles = body.villes.filter((v) => !validVilles.has(v));
   if (invalidVilles.length > 0) {
     return new Response(
@@ -76,6 +78,20 @@ export async function POST(request: Request) {
 
   const maxPagesPerQuery = Math.min(Math.max(body.maxPagesPerQuery ?? 1, 1), 3);
 
+  // Build a unified lookup map for both built-in and custom verticales
+  const vertLookup = new Map<string, { name: string; categories: string[] }>();
+  for (const v of VERTICALES) {
+    vertLookup.set(v.id, { name: v.name, categories: v.googleMapsCategories });
+  }
+  for (const cv of customVerticales) {
+    if (!vertLookup.has(cv.id)) {
+      vertLookup.set(cv.id, {
+        name: (cv as { name: string }).name,
+        categories: (cv as { google_maps_categories: string[] }).google_maps_categories ?? [],
+      });
+    }
+  }
+
   // Build combos
   const combos: Array<{
     verticaleId: string;
@@ -85,13 +101,13 @@ export async function POST(request: Request) {
   }> = [];
 
   for (const vId of body.verticaleIds) {
-    const vert = VERTICALES.find((v) => v.id === vId);
+    const vert = vertLookup.get(vId);
     if (!vert) continue;
     for (const ville of body.villes) {
       combos.push({
         verticaleId: vId,
         verticaleName: vert.name,
-        categories: vert.googleMapsCategories,
+        categories: vert.categories,
         ville,
       });
     }
@@ -193,7 +209,7 @@ export async function POST(request: Request) {
               city: combo.ville,
               phone: p.phone || null,
               website: p.website || null,
-              category: mapVerticaleCategory(combo.verticaleId),
+              category: combo.verticaleName,
               rating: p.rating || null,
               reviews: p.reviews || null,
               google_maps_url: p.mapsUrl || null,

@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
-import { VERTICALES as CANONICAL_VERTICALES, VILLES_FRANCE } from "@/lib/verticales";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useCustomData } from "@/lib/useCustomData";
 import { useCampaigns } from "@/lib/useCampaigns";
 import { useStats } from "@/lib/useStats";
 import { parseSSEEvents } from "@/lib/parseSSE";
@@ -21,19 +21,8 @@ import {
   AlertTriangle,
   X,
   Search,
+  Plus,
 } from "lucide-react";
-
-/* ─── Derived verticales for UI ─── */
-
-const VERTICALES = CANONICAL_VERTICALES.map((v) => ({
-  id: v.id,
-  name: v.name,
-  icon: v.emoji,
-  score: v.totalScore,
-  dealValue: `${v.avgDealValue}\u20AC/mois`,
-  marketSize: v.marketSize.toLocaleString(),
-  tier: v.tier,
-}));
 
 /* ─── Types ─── */
 
@@ -70,11 +59,45 @@ interface ComboStatus {
 /* ─── Main Component ─── */
 
 export default function LaunchPage() {
+  // Custom data (merged built-ins + user-added)
+  const {
+    allVerticales,
+    allVilles,
+    customVilleSet,
+    addVerticale,
+    addVille,
+  } = useCustomData();
+
+  // Derive UI-friendly verticales from merged data
+  const VERTICALES = useMemo(
+    () =>
+      allVerticales.map((v) => ({
+        id: v.id,
+        name: v.name,
+        icon: v.emoji,
+        score: v.totalScore,
+        dealValue: `${v.avgDealValue}\u20AC/mois`,
+        marketSize: v.marketSize.toLocaleString(),
+        tier: v.tier,
+        isCustom: v.isCustom,
+      })),
+    [allVerticales],
+  );
+
   // Multi-select state
   const [selectedVilles, setSelectedVilles] = useState<string[]>([]);
   const [villeSearch, setVilleSearch] = useState("");
   const [selectedNiches, setSelectedNiches] = useState<string[]>([]);
   const [leadCount, setLeadCount] = useState<number>(500);
+
+  // Add custom state
+  const [showAddVille, setShowAddVille] = useState(false);
+  const [newVilleName, setNewVilleName] = useState("");
+  const [addingVille, setAddingVille] = useState(false);
+  const [showAddNiche, setShowAddNiche] = useState(false);
+  const [newNicheName, setNewNicheName] = useState("");
+  const [newNicheCategories, setNewNicheCategories] = useState("");
+  const [addingNiche, setAddingNiche] = useState(false);
 
   // Campaign config
   const [campaignMode, setCampaignMode] = useState<CampaignMode>("existing");
@@ -102,8 +125,37 @@ export default function LaunchPage() {
 
   // Computed
   const villeOptions = villeSearch
-    ? VILLES_FRANCE.filter((v) => v.toLowerCase().includes(villeSearch.toLowerCase()))
-    : VILLES_FRANCE;
+    ? allVilles.filter((v) => v.toLowerCase().includes(villeSearch.toLowerCase()))
+    : allVilles;
+
+  // Add custom ville handler
+  const handleAddVille = useCallback(async () => {
+    if (!newVilleName.trim()) return;
+    setAddingVille(true);
+    const result = await addVille(newVilleName);
+    if (result.success) {
+      setNewVilleName("");
+      setShowAddVille(false);
+    }
+    setAddingVille(false);
+  }, [newVilleName, addVille]);
+
+  // Add custom niche handler
+  const handleAddNiche = useCallback(async () => {
+    if (!newNicheName.trim() || !newNicheCategories.trim()) return;
+    setAddingNiche(true);
+    const cats = newNicheCategories.split(",").map((c) => c.trim()).filter(Boolean);
+    const result = await addVerticale({
+      name: newNicheName,
+      googleMapsCategories: cats,
+    });
+    if (result.success) {
+      setNewNicheName("");
+      setNewNicheCategories("");
+      setShowAddNiche(false);
+    }
+    setAddingNiche(false);
+  }, [newNicheName, newNicheCategories, addVerticale]);
 
   const effectiveVilles = selectedVilles.length > 0 ? selectedVilles : [""];
   const effectiveNiches = selectedNiches.length > 0 ? selectedNiches : [""];
@@ -503,10 +555,42 @@ export default function LaunchPage() {
             <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
               {villeOptions.map((v) => (
                 <Chip key={v} selected={selectedVilles.includes(v)} onClick={() => toggleVille(v)}>
-                  {v}
+                  {v}{customVilleSet.has(v) ? " *" : ""}
                 </Chip>
               ))}
             </div>
+            {/* Add ville inline */}
+            {showAddVille ? (
+              <div className="flex gap-1.5 mt-2">
+                <input
+                  value={newVilleName}
+                  onChange={(e) => setNewVilleName(e.target.value)}
+                  placeholder="Nom de la ville..."
+                  className="flex-1 px-2.5 py-1.5 rounded-lg text-xs outline-none"
+                  style={{ background: "var(--bg)", border: "1px solid var(--border)" }}
+                  onKeyDown={(e) => e.key === "Enter" && handleAddVille()}
+                />
+                <button
+                  onClick={handleAddVille}
+                  disabled={addingVille || !newVilleName.trim()}
+                  className="px-2.5 py-1.5 rounded-lg text-xs font-medium disabled:opacity-40"
+                  style={{ background: "var(--accent)", color: "white" }}
+                >
+                  {addingVille ? "..." : "Ajouter"}
+                </button>
+                <button onClick={() => setShowAddVille(false)} className="px-1.5 py-1 text-xs" style={{ color: "var(--text-muted)" }}>
+                  <X size={12} />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowAddVille(true)}
+                className="flex items-center gap-1 mt-2 text-[11px] font-medium"
+                style={{ color: "var(--accent)" }}
+              >
+                <Plus size={12} /> Ajouter une ville
+              </button>
+            )}
             {selectedVilles.length === 0 && (
               <p className="text-[10px] mt-1.5" style={{ color: "var(--text-muted)" }}>
                 Aucune ville = toutes les villes
@@ -552,13 +636,57 @@ export default function LaunchPage() {
                     {tierVerts.map((v) => (
                       <Chip key={v.id} selected={selectedNiches.includes(v.id)} onClick={() => toggleNiche(v.id)}>
                         <span className="mr-1">{v.icon}</span> {v.name}
-                        <span className="ml-auto text-[10px] opacity-60">T{v.tier}</span>
+                        {v.isCustom ? (
+                          <span className="ml-auto text-[9px] opacity-60 bg-purple-100 text-purple-600 px-1 rounded">Custom</span>
+                        ) : (
+                          <span className="ml-auto text-[10px] opacity-60">T{v.tier}</span>
+                        )}
                       </Chip>
                     ))}
                   </div>
                 </div>
               );
             })}
+            {/* Add niche inline */}
+            {showAddNiche ? (
+              <div className="mt-2 space-y-1.5 p-2.5 rounded-lg" style={{ background: "var(--bg)", border: "1px solid var(--border)" }}>
+                <input
+                  value={newNicheName}
+                  onChange={(e) => setNewNicheName(e.target.value)}
+                  placeholder="Nom de la niche (ex: Veterinaires)"
+                  className="w-full px-2.5 py-1.5 rounded-lg text-xs outline-none"
+                  style={{ background: "var(--bg-raised)", border: "1px solid var(--border)" }}
+                />
+                <input
+                  value={newNicheCategories}
+                  onChange={(e) => setNewNicheCategories(e.target.value)}
+                  placeholder="Categories Google Maps (ex: veterinarian, animal hospital)"
+                  className="w-full px-2.5 py-1.5 rounded-lg text-xs outline-none"
+                  style={{ background: "var(--bg-raised)", border: "1px solid var(--border)" }}
+                />
+                <div className="flex gap-1.5">
+                  <button
+                    onClick={handleAddNiche}
+                    disabled={addingNiche || !newNicheName.trim() || !newNicheCategories.trim()}
+                    className="px-2.5 py-1.5 rounded-lg text-xs font-medium disabled:opacity-40"
+                    style={{ background: "var(--accent)", color: "white" }}
+                  >
+                    {addingNiche ? "..." : "Ajouter"}
+                  </button>
+                  <button onClick={() => setShowAddNiche(false)} className="px-1.5 py-1 text-xs" style={{ color: "var(--text-muted)" }}>
+                    Annuler
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={() => setShowAddNiche(true)}
+                className="flex items-center gap-1 mt-2 text-[11px] font-medium"
+                style={{ color: "var(--accent)" }}
+              >
+                <Plus size={12} /> Ajouter une niche
+              </button>
+            )}
             {selectedNiches.length === 0 && (
               <p className="text-[10px] mt-1" style={{ color: "var(--text-muted)" }}>
                 Aucune niche = toutes les niches

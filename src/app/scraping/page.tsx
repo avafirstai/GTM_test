@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { parseSSEEvents } from "@/lib/parseSSE";
-import { VERTICALES, VILLES_FRANCE } from "@/lib/verticales";
-import type { Verticale } from "@/lib/verticales";
+import { useCustomData } from "@/lib/useCustomData";
+import type { MergedVerticale } from "@/lib/useCustomData";
 import {
   MapPin,
   Tag,
@@ -14,6 +14,7 @@ import {
   ArrowRight,
   Zap,
   Globe,
+  Plus,
 } from "lucide-react";
 
 /* ------------------------------------------------------------------ */
@@ -51,9 +52,29 @@ interface ScrapingJob {
 /* ------------------------------------------------------------------ */
 
 export default function ScrapingPage() {
+  // Custom data hook (merges defaults + user-added)
+  const {
+    allVerticales,
+    allVilles,
+    customVilleSet,
+    addVerticale,
+    addVille,
+  } = useCustomData();
+
   // Selection state
   const [selectedVerts, setSelectedVerts] = useState<Set<string>>(new Set());
   const [selectedVilles, setSelectedVilles] = useState<Set<string>>(new Set());
+
+  // Add-new forms
+  const [showAddVert, setShowAddVert] = useState(false);
+  const [newVertName, setNewVertName] = useState("");
+  const [newVertEmoji, setNewVertEmoji] = useState("🏢");
+  const [newVertCategories, setNewVertCategories] = useState("");
+  const [addingVert, setAddingVert] = useState(false);
+
+  const [showAddVille, setShowAddVille] = useState(false);
+  const [newVilleName, setNewVilleName] = useState("");
+  const [addingVille, setAddingVille] = useState(false);
 
   // Scraping state
   const [status, setStatus] = useState<Status>("idle");
@@ -117,12 +138,12 @@ export default function ScrapingPage() {
     if (tier === null) {
       setSelectedVerts(new Set());
     } else {
-      setSelectedVerts(new Set(VERTICALES.filter((v) => v.tier <= tier).map((v) => v.id)));
+      setSelectedVerts(new Set(allVerticales.filter((v) => v.tier <= tier).map((v) => v.id)));
     }
   }
 
   function selectAllVerts() {
-    setSelectedVerts(new Set(VERTICALES.map((v) => v.id)));
+    setSelectedVerts(new Set(allVerticales.map((v) => v.id)));
   }
 
   function toggleVille(v: string) {
@@ -135,18 +156,47 @@ export default function ScrapingPage() {
   }
 
   function selectTopVilles(n: number) {
-    setSelectedVilles(new Set(VILLES_FRANCE.slice(0, n)));
+    setSelectedVilles(new Set(allVilles.slice(0, n)));
   }
 
   function selectAllVilles() {
-    setSelectedVilles(new Set(VILLES_FRANCE));
+    setSelectedVilles(new Set(allVilles));
+  }
+
+  async function handleAddVerticale() {
+    if (!newVertName.trim() || !newVertCategories.trim()) return;
+    setAddingVert(true);
+    const cats = newVertCategories.split(",").map((c) => c.trim()).filter(Boolean);
+    const result = await addVerticale({
+      name: newVertName.trim(),
+      emoji: newVertEmoji || "🏢",
+      googleMapsCategories: cats,
+    });
+    if (result.success) {
+      setNewVertName("");
+      setNewVertEmoji("🏢");
+      setNewVertCategories("");
+      setShowAddVert(false);
+    }
+    setAddingVert(false);
+  }
+
+  async function handleAddVille() {
+    if (!newVilleName.trim()) return;
+    setAddingVille(true);
+    const result = await addVille(newVilleName.trim());
+    if (result.success) {
+      setNewVilleName("");
+      setShowAddVille(false);
+    }
+    setAddingVille(false);
   }
 
   /* ---------------------------------------------------------------- */
   /*  Estimation                                                       */
   /* ---------------------------------------------------------------- */
 
-  const selectedVertList = VERTICALES.filter((v) => selectedVerts.has(v.id));
+  const selectedVertList = allVerticales.filter((v) => selectedVerts.has(v.id));
   const totalCategories = selectedVertList.reduce(
     (sum, v) => sum + v.googleMapsCategories.length,
     0,
@@ -296,7 +346,7 @@ export default function ScrapingPage() {
     const params = new URLSearchParams();
     // Map verticaleIds → verticale names for the leads filter
     for (const vId of vertIds) {
-      const vert = VERTICALES.find((v) => v.id === vId);
+      const vert = allVerticales.find((v) => v.id === vId);
       if (vert) params.append("verticale", vert.name);
     }
     for (const ville of villes) {
@@ -320,8 +370,8 @@ export default function ScrapingPage() {
           <div>
             <h1 className="text-xl font-semibold tracking-tight">Scraping</h1>
             <p className="text-sm" style={{ color: "var(--text-muted)" }}>
-              Google Places API &middot; {VERTICALES.length} verticales &middot;{" "}
-              {VILLES_FRANCE.length} villes
+              Google Places API &middot; {allVerticales.length} verticales &middot;{" "}
+              {allVilles.length} villes
             </p>
           </div>
         </div>
@@ -340,7 +390,7 @@ export default function ScrapingPage() {
                 <div className="flex items-center gap-2">
                   <Tag size={16} style={{ color: "var(--text-muted)" }} />
                   <h2 className="text-sm font-medium">
-                    Verticales ({selectedVerts.size}/{VERTICALES.length})
+                    Verticales ({selectedVerts.size}/{allVerticales.length})
                   </h2>
                 </div>
                 <div className="flex gap-1.5">
@@ -351,14 +401,73 @@ export default function ScrapingPage() {
                 </div>
               </div>
               <div className="p-4 grid grid-cols-1 gap-1.5 max-h-[420px] overflow-y-auto">
-                {VERTICALES.map((v) => (
+                {allVerticales.map((v) => (
                   <VertChip
                     key={v.id}
                     vert={v}
                     selected={selectedVerts.has(v.id)}
                     onClick={() => toggleVert(v.id)}
+                    isCustom={v.isCustom}
                   />
                 ))}
+
+                {/* Add custom verticale */}
+                {!showAddVert ? (
+                  <button
+                    onClick={() => setShowAddVert(true)}
+                    className="flex items-center gap-2 px-3 py-2.5 rounded-lg text-left transition-all cursor-pointer border border-dashed"
+                    style={{ borderColor: "var(--border)", color: "var(--text-muted)" }}
+                  >
+                    <Plus size={14} />
+                    <span className="text-xs">Ajouter une verticale</span>
+                  </button>
+                ) : (
+                  <div className="rounded-lg border border-[var(--accent)] p-3 space-y-2" style={{ background: "var(--bg)" }}>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={newVertEmoji}
+                        onChange={(e) => setNewVertEmoji(e.target.value)}
+                        className="w-10 text-center px-1 py-1.5 rounded text-sm outline-none"
+                        style={{ background: "var(--bg-raised)", border: "1px solid var(--border)" }}
+                        maxLength={2}
+                      />
+                      <input
+                        type="text"
+                        value={newVertName}
+                        onChange={(e) => setNewVertName(e.target.value)}
+                        placeholder="Nom (ex: Pharmacies)"
+                        className="flex-1 px-2 py-1.5 rounded text-xs outline-none"
+                        style={{ background: "var(--bg-raised)", border: "1px solid var(--border)" }}
+                      />
+                    </div>
+                    <input
+                      type="text"
+                      value={newVertCategories}
+                      onChange={(e) => setNewVertCategories(e.target.value)}
+                      placeholder="Categories Google Maps (separees par virgule)"
+                      className="w-full px-2 py-1.5 rounded text-xs outline-none"
+                      style={{ background: "var(--bg-raised)", border: "1px solid var(--border)" }}
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        onClick={handleAddVerticale}
+                        disabled={addingVert || !newVertName.trim() || !newVertCategories.trim()}
+                        className="flex-1 px-2 py-1.5 rounded text-xs font-medium text-white disabled:opacity-40"
+                        style={{ background: "var(--accent)" }}
+                      >
+                        {addingVert ? "..." : "Ajouter"}
+                      </button>
+                      <button
+                        onClick={() => setShowAddVert(false)}
+                        className="px-2 py-1.5 rounded text-xs"
+                        style={{ color: "var(--text-muted)" }}
+                      >
+                        Annuler
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -371,7 +480,7 @@ export default function ScrapingPage() {
                 <div className="flex items-center gap-2">
                   <MapPin size={16} style={{ color: "var(--text-muted)" }} />
                   <h2 className="text-sm font-medium">
-                    Villes ({selectedVilles.size}/{VILLES_FRANCE.length})
+                    Villes ({selectedVilles.size}/{allVilles.length})
                   </h2>
                 </div>
                 <div className="flex gap-1.5">
@@ -382,7 +491,7 @@ export default function ScrapingPage() {
                 </div>
               </div>
               <div className="p-4 flex flex-wrap gap-2 max-h-[420px] overflow-y-auto">
-                {VILLES_FRANCE.map((v) => (
+                {allVilles.map((v) => (
                   <button
                     key={v}
                     onClick={() => toggleVille(v)}
@@ -394,8 +503,50 @@ export default function ScrapingPage() {
                     }}
                   >
                     {v}
+                    {customVilleSet.has(v) && (
+                      <span className="ml-1 opacity-50">*</span>
+                    )}
                   </button>
                 ))}
+
+                {/* Add custom ville */}
+                {!showAddVille ? (
+                  <button
+                    onClick={() => setShowAddVille(true)}
+                    className="text-xs px-3 py-1.5 rounded-full transition-all cursor-pointer border border-dashed flex items-center gap-1"
+                    style={{ borderColor: "var(--border)", color: "var(--text-muted)" }}
+                  >
+                    <Plus size={10} /> Ajouter
+                  </button>
+                ) : (
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      value={newVilleName}
+                      onChange={(e) => setNewVilleName(e.target.value)}
+                      placeholder="Ville..."
+                      className="px-2 py-1 rounded-full text-xs outline-none w-28"
+                      style={{ background: "var(--bg-raised)", border: "1px solid var(--accent)" }}
+                      onKeyDown={(e) => { if (e.key === "Enter") handleAddVille(); }}
+                      autoFocus
+                    />
+                    <button
+                      onClick={handleAddVille}
+                      disabled={addingVille || !newVilleName.trim()}
+                      className="text-xs px-2 py-1 rounded-full font-medium text-white disabled:opacity-40"
+                      style={{ background: "var(--accent)" }}
+                    >
+                      {addingVille ? "..." : "OK"}
+                    </button>
+                    <button
+                      onClick={() => { setShowAddVille(false); setNewVilleName(""); }}
+                      className="text-xs px-1 py-1"
+                      style={{ color: "var(--text-muted)" }}
+                    >
+                      &times;
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -606,7 +757,7 @@ export default function ScrapingPage() {
           </div>
           <div className="divide-y divide-[var(--border)]">
             {history.map((job) => (
-              <HistoryRow key={job.id} job={job} />
+              <HistoryRow key={job.id} job={job} verticales={allVerticales} />
             ))}
           </div>
         </div>
@@ -640,10 +791,12 @@ function VertChip({
   vert,
   selected,
   onClick,
+  isCustom,
 }: {
-  vert: Verticale;
+  vert: MergedVerticale;
   selected: boolean;
   onClick: () => void;
+  isCustom?: boolean;
 }) {
   return (
     <button
@@ -663,27 +816,30 @@ function VertChip({
           {vert.name}
         </p>
         <p className="text-[10px] truncate" style={{ color: "var(--text-muted)" }}>
-          {vert.googleMapsCategories.length} categories &middot; Tier {vert.tier}
+          {vert.googleMapsCategories.length} categories
+          {isCustom ? " · Custom" : ` · Tier ${vert.tier}`}
         </p>
       </div>
       <span
         className="text-[10px] px-2 py-0.5 rounded-full font-medium"
         style={{
-          background:
-            vert.tier === 1
+          background: isCustom
+            ? "var(--accent-subtle)"
+            : vert.tier === 1
               ? "var(--green-subtle)"
               : vert.tier === 2
                 ? "var(--amber-subtle)"
                 : "var(--bg-surface)",
-          color:
-            vert.tier === 1
+          color: isCustom
+            ? "var(--accent)"
+            : vert.tier === 1
               ? "var(--green)"
               : vert.tier === 2
                 ? "var(--amber)"
                 : "var(--text-muted)",
         }}
       >
-        T{vert.tier}
+        {isCustom ? "Custom" : `T${vert.tier}`}
       </span>
     </button>
   );
@@ -764,7 +920,7 @@ function ComboRow({ combo }: { combo: ComboStatus }) {
   );
 }
 
-function HistoryRow({ job }: { job: ScrapingJob }) {
+function HistoryRow({ job, verticales }: { job: ScrapingJob; verticales: MergedVerticale[] }) {
   const date = new Date(job.created_at);
   const fmtDate = date.toLocaleDateString("fr-FR", {
     day: "numeric",
@@ -790,7 +946,7 @@ function HistoryRow({ job }: { job: ScrapingJob }) {
   const leadsUrl = (() => {
     const params = new URLSearchParams();
     for (const vId of job.verticale_ids ?? []) {
-      const vert = VERTICALES.find((v) => v.id === vId);
+      const vert = verticales.find((v) => v.id === vId);
       if (vert) params.append("verticale", vert.name);
     }
     for (const ville of job.villes ?? []) {
