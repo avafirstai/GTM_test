@@ -5,9 +5,10 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export async function GET() {
+  // Only select the columns needed for aggregation (no name/address = less data)
   const { data: leads, error } = await supabase
     .from("gtm_leads")
-    .select("name, city, phone, website, email, category, rating, reviews, score, apify_run");
+    .select("city, phone, website, email, category, rating, reviews, score");
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
