@@ -1,24 +1,20 @@
 "use client";
 
-import { useStats } from "@/lib/useStats";
 import { useCampaigns } from "@/lib/useCampaigns";
+import { useStats } from "@/lib/useStats";
 import {
-  Settings,
   Mail,
   Database,
-  Globe,
-  Calendar,
-  Zap,
   CheckCircle,
   Clock,
   AlertCircle,
 } from "lucide-react";
 
 export default function SettingsPage() {
-  const { data, loading } = useStats();
   const { data: campaignData, loading: campaignLoading } = useCampaigns();
+  const { data: statsData, loading: statsLoading } = useStats();
 
-  if ((loading && !data) || (campaignLoading && !campaignData)) {
+  if ((campaignLoading && !campaignData) || (statsLoading && !statsData)) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="w-5 h-5 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin" />
@@ -26,20 +22,27 @@ export default function SettingsPage() {
     );
   }
 
-  const stats = data?.stats;
-  const apifyRuns = data?.apifyRuns ?? [];
-  const succeededRuns = apifyRuns.filter((r) => r.status === "SUCCEEDED").length;
+  const stats = statsData?.stats;
 
+  // --- Instantly (connexion reelle via /api/campaigns) ---
   const instantlyConnected = campaignData?.connected ?? false;
   const instantlyReachable = campaignData?.apiReachable ?? false;
   const instantlyCampaigns = campaignData?.campaigns ?? [];
   const instantlyTotals = campaignData?.totals;
   const instantlyDetails = !instantlyConnected
-    ? "Cle API non configuree"
+    ? "Cle API non configuree — ajoutez INSTANTLY_API_KEY"
     : !instantlyReachable
       ? "Cle API configuree \u00B7 API temporairement indisponible"
       : `${instantlyCampaigns.length} campagne${instantlyCampaigns.length !== 1 ? "s" : ""} \u00B7 ${instantlyTotals?.totalLeads.toLocaleString() ?? 0} leads \u00B7 ${instantlyTotals?.emailsSent.toLocaleString() ?? 0} envoyes`;
-  const instantlyStatus = !instantlyConnected ? "planned" : !instantlyReachable ? "limit" : "connected";
+  const instantlyStatus: "connected" | "limit" | "planned" | "error" =
+    !instantlyConnected ? "error" : !instantlyReachable ? "limit" : "connected";
+
+  // --- Supabase (connexion reelle via /api/stats) ---
+  const supabaseConnected = stats != null && stats.totalLeads >= 0;
+  const supabaseDetails = supabaseConnected
+    ? `${stats.totalLeads.toLocaleString()} leads \u00B7 PostgreSQL \u00B7 Auto-refresh 30s`
+    : "Connexion echouee — verifiez NEXT_PUBLIC_SUPABASE_URL";
+  const supabaseStatus: "connected" | "error" = supabaseConnected ? "connected" : "error";
 
   return (
     <div className="p-8 max-w-3xl mx-auto">
@@ -47,11 +50,11 @@ export default function SettingsPage() {
       <div className="mb-8">
         <h1 className="text-xl font-semibold tracking-tight">Settings</h1>
         <p className="text-sm mt-1" style={{ color: "var(--text-muted)" }}>
-          Configuration des APIs et integrations
+          Connexions actives &mdash; toutes les donnees sont en temps reel
         </p>
       </div>
 
-      {/* Integrations */}
+      {/* Active Integrations — only real connections */}
       <div className="space-y-3 mb-8">
         <ApiCard
           name="Instantly.ai"
@@ -60,39 +63,15 @@ export default function SettingsPage() {
           details={instantlyDetails}
         />
         <ApiCard
-          name="Apify (historique)"
-          icon={<Globe size={18} />}
-          status="limit"
-          details={`${succeededRuns} runs passes \u00B7 ${stats?.totalLeads.toLocaleString() ?? 0} leads importes (pas de connexion API active)`}
-        />
-        <ApiCard
-          name="Email Scraper"
-          icon={<Zap size={18} />}
-          status={stats && stats.withEmail > 100 ? "connected" : "limit"}
-          details={`Scraping web gratuit \u00B7 ${stats?.withEmail ?? 0} emails trouves sur ${stats?.withWebsite.toLocaleString() ?? 0} sites`}
-        />
-        <ApiCard
           name="Supabase"
           icon={<Database size={18} />}
-          status="connected"
-          details={`${stats?.totalLeads.toLocaleString() ?? 0} leads \u00B7 PostgreSQL \u00B7 Auto-refresh 30s`}
-        />
-        <ApiCard
-          name="Cal.com"
-          icon={<Calendar size={18} />}
-          status="planned"
-          details="Integration booking \u2014 a venir"
-        />
-        <ApiCard
-          name="N8N"
-          icon={<Zap size={18} />}
-          status="planned"
-          details="Automatisation workflows — Phase 4"
+          status={supabaseStatus}
+          details={supabaseDetails}
         />
       </div>
 
-      {/* Instantly Campaigns */}
-      {instantlyConnected && instantlyCampaigns.length > 0 && (
+      {/* Instantly Campaigns — only if connected */}
+      {instantlyConnected && instantlyReachable && instantlyCampaigns.length > 0 && (
         <div
           className="rounded-xl border border-[var(--border)] mb-6"
           style={{ background: "var(--bg-raised)" }}
@@ -139,20 +118,31 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {/* Cost Summary — Planned */}
-      <div
-        className="rounded-xl border border-[var(--border)]"
-        style={{ background: "var(--bg-raised)" }}
-      >
-        <div className="px-5 py-4 border-b border-[var(--border)]">
-          <h2 className="text-sm font-medium">Cout total du pipeline</h2>
+      {/* Data summary */}
+      {supabaseConnected && (
+        <div
+          className="rounded-xl border border-[var(--border)]"
+          style={{ background: "var(--bg-raised)" }}
+        >
+          <div className="px-5 py-4 border-b border-[var(--border)]">
+            <h2 className="text-sm font-medium">Donnees pipeline</h2>
+          </div>
+          <div className="grid grid-cols-3 gap-4 p-5">
+            <div className="text-center">
+              <p className="text-lg font-semibold">{stats.totalLeads.toLocaleString()}</p>
+              <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>Leads total</p>
+            </div>
+            <div className="text-center">
+              <p className="text-lg font-semibold">{stats.withEmail.toLocaleString()}</p>
+              <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>Avec email</p>
+            </div>
+            <div className="text-center">
+              <p className="text-lg font-semibold">{Math.round(stats.emailRate)}%</p>
+              <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>Taux email</p>
+            </div>
+          </div>
         </div>
-        <div className="p-5 text-center">
-          <p className="text-sm" style={{ color: "var(--text-muted)" }}>
-            Suivi des couts &mdash; a venir (Phase 4)
-          </p>
-        </div>
-      </div>
+      )}
 
       {/* Footer */}
       <p className="text-center text-xs mt-10" style={{ color: "var(--text-muted)" }}>

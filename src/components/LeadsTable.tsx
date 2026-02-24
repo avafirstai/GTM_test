@@ -178,6 +178,7 @@ export function LeadsTable({ leads, initialFilters }: LeadsTableProps) {
   const [enrichResults, setEnrichResults] = useState<Record<string, { email?: string; error?: string }>>({});
   const [bulkAction, setBulkAction] = useState<"idle" | "exporting" | "sending" | "enriching">("idle");
   const [bulkMessage, setBulkMessage] = useState<string>("");
+  const [sendingLeadId, setSendingLeadId] = useState<string | null>(null);
 
   // --- Action handlers ---
 
@@ -206,6 +207,38 @@ export function LeadsTable({ leads, initialFilters }: LeadsTableProps) {
         next.delete(lead.id);
         return next;
       });
+    }
+  }, []);
+
+  const handleSendSingleToInstantly = useCallback(async (lead: Lead) => {
+    if (!lead.email) return;
+    setSendingLeadId(lead.id);
+    try {
+      const res = await fetch("/api/leads/upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          leads: [{
+            email: lead.email,
+            name: lead.nom_entreprise,
+            phone: lead.telephone,
+            website: lead.site_web,
+            city: lead.ville,
+            category: lead.verticale,
+          }],
+        }),
+      });
+      const data = await res.json();
+      if (data.success && data.uploaded > 0) {
+        setBulkMessage(`${lead.nom_entreprise} ajoute a Instantly`);
+      } else {
+        setBulkMessage(data.error || "Erreur lors de l'envoi");
+      }
+    } catch {
+      setBulkMessage("Erreur reseau");
+    } finally {
+      setSendingLeadId(null);
+      setTimeout(() => setBulkMessage(""), 3000);
     }
   }, []);
 
@@ -288,19 +321,23 @@ export function LeadsTable({ leads, initialFilters }: LeadsTableProps) {
     }
     setBulkAction("sending");
     try {
-      const res = await fetch("/api/orchestrate", {
+      const res = await fetch("/api/leads/upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          ville: "",
-          niche: "",
-          count: leadsToSend.length,
-          autoLaunch: false,
+          leads: leadsToSend.map((l) => ({
+            email: l.email,
+            name: l.nom_entreprise,
+            phone: l.telephone,
+            website: l.site_web,
+            city: l.ville,
+            category: l.verticale,
+          })),
         }),
       });
       const data = await res.json();
       if (data.success) {
-        setBulkMessage(`${data.uploaded} leads envoyes a Instantly`);
+        setBulkMessage(`${data.uploaded} lead${data.uploaded !== 1 ? "s" : ""} envoye${data.uploaded !== 1 ? "s" : ""} a Instantly`);
       } else {
         setBulkMessage(data.error || "Erreur lors de l'envoi");
       }
@@ -749,13 +786,25 @@ export function LeadsTable({ leads, initialFilters }: LeadsTableProps) {
                               </button>
                             )}
                             {lead.email && (
-                              <button
-                                className="text-xs px-3 py-1.5 rounded-md font-medium"
-                                style={{ background: "var(--green-subtle)", color: "var(--green)" }}
-                                onClick={(e) => { e.stopPropagation(); window.open(`mailto:${lead.email}`, "_blank"); }}
-                              >
-                                Envoyer email
-                              </button>
+                              <>
+                                <button
+                                  className="text-xs px-3 py-1.5 rounded-md font-medium"
+                                  style={{ background: "var(--green-subtle)", color: "var(--green)" }}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleSendSingleToInstantly(lead);
+                                  }}
+                                >
+                                  {sendingLeadId === lead.id ? "Envoi..." : "Ajouter a Instantly"}
+                                </button>
+                                <button
+                                  className="text-xs px-3 py-1.5 rounded-md font-medium"
+                                  style={{ background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}
+                                  onClick={(e) => { e.stopPropagation(); window.open(`mailto:${lead.email}`, "_blank"); }}
+                                >
+                                  Ouvrir mailto
+                                </button>
+                              </>
                             )}
                             {lead.site_web && (
                               <button
