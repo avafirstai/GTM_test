@@ -1,279 +1,221 @@
 "use client";
 
-import { StatCard } from "@/components/StatCard";
-import { Pipeline } from "@/components/Pipeline";
-import { VerticaleChart } from "@/components/VerticaleChart";
-import { ScrapingStatus } from "@/components/ScrapingStatus";
-import { CampaignTable } from "@/components/CampaignTable";
-import { EmailFunnel } from "@/components/EmailFunnel";
-import { GeoMap } from "@/components/GeoMap";
-import { ScoreDistribution } from "@/components/ScoreDistribution";
-import { EnrichmentProgress } from "@/components/EnrichmentProgress";
 import { useStats } from "@/lib/useStats";
+import { useCampaigns } from "@/lib/useCampaigns";
+import Link from "next/link";
+import {
+  Users,
+  Mail,
+  Phone,
+  Rocket,
+  ArrowRight,
+  TrendingUp,
+} from "lucide-react";
 
 export default function Dashboard() {
   const { data, loading } = useStats();
+  const { data: campaignData } = useCampaigns();
 
   if (loading || !data) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin w-8 h-8 border-2 border-indigo-500 border-t-transparent rounded-full mx-auto mb-4" />
-          <p className="text-sm" style={{ color: "var(--muted)" }}>Chargement du dashboard...</p>
-        </div>
+        <div className="w-5 h-5 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
 
-  const { stats, pipeline, apifyRuns, enrichment } = data;
-
-  const campaigns = [
-    {
-      name: "France B2B — Toutes Verticales — Séquence 1",
-      status: "paused" as const,
-      totalLeads: stats.withEmail,
-      sent: 0,
-      opened: 0,
-      replied: 0,
-      booked: 0,
-    },
-  ];
+  const { stats } = data;
+  const campaigns = campaignData?.campaigns ?? [];
+  const connected = campaignData?.connected ?? false;
 
   return (
-    <div className="min-h-screen p-6 max-w-[1400px] mx-auto">
+    <div className="p-8 max-w-5xl mx-auto">
       {/* Header */}
-      <div className="flex items-center justify-between mb-8">
-        <div>
-          <div className="flex items-center gap-3 mb-1">
-            <h1 className="text-2xl font-bold tracking-tight">AVA GTM Command Center</h1>
-            <span
-              className="text-[10px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wider animate-pulse"
-              style={{ background: "rgba(34,197,94,0.15)", color: "#22c55e" }}
-            >
-              LIVE
-            </span>
-          </div>
-          <p className="text-sm" style={{ color: "var(--muted)" }}>
-            Growth Machine B2B France — {stats.totalLeads.toLocaleString()} leads
-            {" "}&bull;{" "}
-            {Object.keys(stats.byVerticale).length} verticales
-            {" "}&bull;{" "}
-            {Object.keys(stats.byVille).length} villes
-            {stats.lastUpdated && (
-              <>
-                {" "}&bull;{" "}
-                <span style={{ color: "#22c55e" }}>
-                  MAJ: {stats.lastUpdated}
-                </span>
-              </>
-            )}
-          </p>
-        </div>
-        <div className="text-right">
-          <p className="text-[10px] uppercase tracking-wider" style={{ color: "var(--muted)" }}>
-            Dernière mise à jour
-          </p>
-          <p className="text-sm font-medium">{stats.lastUpdated}</p>
-          <p className="text-[10px] mt-0.5" style={{ color: "var(--muted)" }}>
-            Coût total: <span className="font-bold" style={{ color: "#22c55e" }}>0 EUR</span>
-          </p>
-        </div>
+      <div className="mb-8">
+        <h1 className="text-xl font-semibold tracking-tight">Dashboard</h1>
+        <p className="text-sm mt-1" style={{ color: "var(--text-muted)" }}>
+          {stats.totalLeads.toLocaleString()} leads &middot;{" "}
+          {Object.keys(stats.byVerticale).length} verticales &middot;{" "}
+          {Object.keys(stats.byVille).length} villes
+        </p>
       </div>
 
-      {/* Hero Stats Row */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <StatCard
-          title="Total Leads"
+      {/* Hero metrics */}
+      <div className="grid grid-cols-3 gap-4 mb-8">
+        <MetricCard
+          icon={<Users size={18} />}
+          label="Total Leads"
           value={stats.totalLeads.toLocaleString()}
-          icon="👥"
-          color="#6366f1"
-          subtitle={`Score moyen: ${stats.avgScore} • Note: ${stats.avgRating}/5`}
+          sub={`Score moyen: ${stats.avgScore}`}
         />
-        <StatCard
-          title="Emails Trouvés"
+        <MetricCard
+          icon={<Mail size={18} />}
+          label="Emails"
           value={stats.withEmail.toLocaleString()}
-          icon="📧"
-          color={stats.withEmail > 0 ? "#22c55e" : "#f59e0b"}
-          subtitle={`${stats.emailRate}% taux enrichissement`}
-          trend={stats.withEmail > 0 ? { value: stats.emailRate, label: "enrichis" } : undefined}
+          sub={`${stats.emailRate}% enrichis`}
+          accent={stats.withEmail > 0}
         />
-        <StatCard
-          title="Avec Téléphone"
+        <MetricCard
+          icon={<Phone size={18} />}
+          label="Telephones"
           value={stats.withPhone.toLocaleString()}
-          icon="📞"
-          color="#22c55e"
-          subtitle={`${stats.phoneRate}% des leads`}
-        />
-        <StatCard
-          title="Avec Site Web"
-          value={stats.withWebsite.toLocaleString()}
-          icon="🌐"
-          color="#818cf8"
-          subtitle={`${stats.websiteRate}% des leads`}
+          sub={`${stats.phoneRate}% des leads`}
+          accent
         />
       </div>
 
-      {/* Score + Priority Row */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <StatCard
-          title="Leads Prioritaires"
-          value={stats.highScore.toLocaleString()}
-          icon="🔥"
-          color="#ef4444"
-          subtitle="Score ≥ 80"
-        />
-        <StatCard
-          title="Standard"
-          value={stats.mediumScore.toLocaleString()}
-          icon="📋"
-          color="#f59e0b"
-          subtitle="Score 50-79"
-        />
-        <StatCard
-          title="Avis Google Total"
-          value={stats.totalReviews > 1000 ? `${(stats.totalReviews / 1000).toFixed(0)}K` : stats.totalReviews.toLocaleString()}
-          icon="⭐"
-          color="#fbbf24"
-          subtitle={`Note moyenne: ${stats.avgRating}/5`}
-        />
-        <StatCard
-          title="Scraping Runs"
-          value="11/11"
-          icon="🕷️"
-          color="#a78bfa"
-          subtitle="600/930 requêtes exécutées"
-        />
-      </div>
-
-      {/* Enrichment Funnel + Pipeline */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        <EmailFunnel
-          total={stats.totalLeads}
-          withWebsite={stats.withWebsite}
-          withEmail={stats.withEmail}
-          withPhone={stats.withPhone}
-        />
-        <Pipeline stages={pipeline} />
-      </div>
-
-      {/* Score Distribution + Enrichment Summary */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        <ScoreDistribution
-          high={stats.byScore.high}
-          medium={stats.byScore.medium}
-          low={stats.byScore.low}
-          avgScore={stats.avgScore}
-          avgRating={stats.avgRating}
-          totalReviews={stats.totalReviews}
-        />
-        {/* Enrichment Method Card */}
-        <div
-          className="rounded-xl p-6"
-          style={{ background: "var(--card)", border: "1px solid var(--border)" }}
-        >
-          <h3 className="text-lg font-semibold mb-5">Enrichissement Email</h3>
-
-          <div className="space-y-4">
-            <div className="p-4 rounded-lg" style={{ background: "rgba(34,197,94,0.08)", border: "1px solid rgba(34,197,94,0.2)" }}>
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-lg">🆓</span>
-                <span className="text-sm font-bold" style={{ color: "#22c55e" }}>Méthode: Scraping Web Gratuit</span>
-              </div>
-              <p className="text-xs" style={{ color: "var(--muted)" }}>
-                {enrichment.method}
-              </p>
-              <div className="grid grid-cols-3 gap-3 mt-3">
-                <div className="text-center">
-                  <p className="text-xl font-bold" style={{ color: "#22c55e" }}>{enrichment.totalEmailsFound.toLocaleString()}</p>
-                  <p className="text-[10px]" style={{ color: "var(--muted)" }}>Emails trouvés</p>
-                </div>
-                <div className="text-center">
-                  <p className="text-xl font-bold" style={{ color: "#818cf8" }}>{enrichment.totalLeadsProcessed.toLocaleString()}</p>
-                  <p className="text-[10px]" style={{ color: "var(--muted)" }}>Leads traités</p>
-                </div>
-                <div className="text-center">
-                  <p className="text-xl font-bold" style={{ color: "#22c55e" }}>{enrichment.cost}</p>
-                  <p className="text-[10px]" style={{ color: "var(--muted)" }}>Coût total</p>
-                </div>
-              </div>
-            </div>
-
-            <div className="p-4 rounded-lg" style={{ background: "var(--background)" }}>
-              <p className="text-xs font-medium mb-2">Prochaines étapes</p>
-              <div className="space-y-2">
-                {[
-                  { icon: "⏳", text: "Scraping emails en cours...", status: "running" },
-                  { icon: "📤", text: "Upload Instantly par verticale", status: "pending" },
-                  { icon: "✉️", text: "Lancer séquences email", status: "pending" },
-                  { icon: "📊", text: "Suivre open/reply rates", status: "pending" },
-                ].map((step) => (
-                  <div key={step.text} className="flex items-center gap-2">
-                    <span className="text-sm">{step.icon}</span>
-                    <span className="text-xs flex-1" style={{ color: step.status === "running" ? "#f59e0b" : "var(--muted)" }}>
-                      {step.text}
-                    </span>
-                    <span
-                      className="text-[9px] font-bold px-1.5 py-0.5 rounded"
-                      style={{
-                        background: step.status === "running" ? "rgba(245,158,11,0.15)" : "rgba(115,115,115,0.15)",
-                        color: step.status === "running" ? "#f59e0b" : "#737373",
-                      }}
-                    >
-                      {step.status === "running" ? "EN COURS" : "À FAIRE"}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
+      {/* CTA */}
+      <Link
+        href="/launch"
+        className="flex items-center justify-between p-4 rounded-xl mb-8 transition-colors group"
+        style={{
+          background: "var(--accent-subtle)",
+          border: "1px solid rgba(99, 102, 241, 0.15)",
+        }}
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-lg flex items-center justify-center"
+            style={{ background: "var(--accent)", color: "white" }}
+          >
+            <Rocket size={18} />
+          </div>
+          <div>
+            <p className="text-sm font-medium">Lancer une campagne</p>
+            <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+              Scraping + enrichissement + envoi automatique
+            </p>
           </div>
         </div>
+        <ArrowRight
+          size={18}
+          className="transition-transform group-hover:translate-x-1"
+          style={{ color: "var(--accent-hover)" }}
+        />
+      </Link>
+
+      {/* Quick stats row */}
+      <div className="grid grid-cols-4 gap-3 mb-8">
+        <SmallStat label="Prioritaires" value={stats.highScore} caption="Score 80+" />
+        <SmallStat label="Standard" value={stats.mediumScore} caption="Score 50-79" />
+        <SmallStat label="Sites web" value={stats.withWebsite} caption={`${stats.websiteRate}%`} />
+        <SmallStat label="Avis Google" value={stats.totalReviews > 1000 ? `${(stats.totalReviews / 1000).toFixed(0)}K` : stats.totalReviews} caption={`${stats.avgRating}/5 moy.`} />
       </div>
 
       {/* Campaigns */}
-      <div className="mb-6">
-        <CampaignTable campaigns={campaigns} />
-      </div>
-
-      {/* Enrichment by Verticale (full width) */}
-      <div className="mb-6">
-        <EnrichmentProgress rates={data.categoryEmailRates} />
-      </div>
-
-      {/* Verticales + Geo */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-        <VerticaleChart data={stats.byVerticale} />
-        <GeoMap data={stats.byVille} />
-      </div>
-
-      {/* Scraping Status */}
-      <div className="mb-6">
-        <ScrapingStatus runs={apifyRuns} />
+      <div className="rounded-xl border border-[var(--border)]" style={{ background: "var(--bg-raised)" }}>
+        <div className="px-5 py-4 flex items-center justify-between border-b border-[var(--border)]">
+          <div className="flex items-center gap-2">
+            <TrendingUp size={16} style={{ color: "var(--text-muted)" }} />
+            <h2 className="text-sm font-medium">Campagnes</h2>
+          </div>
+          {connected && (
+            <Link href="/campaigns" className="text-xs font-medium" style={{ color: "var(--accent-hover)" }}>
+              Voir tout
+            </Link>
+          )}
+        </div>
+        <div className="p-5">
+          {!connected ? (
+            <p className="text-sm text-center py-6" style={{ color: "var(--text-muted)" }}>
+              Aucune campagne active. Lancez votre premiere campagne.
+            </p>
+          ) : campaigns.length === 0 ? (
+            <p className="text-sm text-center py-6" style={{ color: "var(--text-muted)" }}>
+              Aucune campagne trouvee.
+            </p>
+          ) : (
+            <div className="space-y-3">
+              {campaigns.slice(0, 5).map((c) => (
+                <div
+                  key={c.id}
+                  className="flex items-center justify-between py-2"
+                >
+                  <div className="flex items-center gap-3">
+                    <StatusDot status={c.status} />
+                    <span className="text-sm">{c.name}</span>
+                  </div>
+                  <div className="flex items-center gap-4 text-xs" style={{ color: "var(--text-muted)" }}>
+                    <span>{c.analytics?.totalLeads ?? 0} leads</span>
+                    <span>{c.analytics?.emailsSent ?? 0} sent</span>
+                    <span>{c.analytics?.emailsRead ?? 0} opened</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Footer */}
-      <div className="text-center py-6">
-        <div
-          className="inline-flex items-center gap-4 px-6 py-3 rounded-xl"
-          style={{ background: "var(--card)", border: "1px solid var(--border)" }}
-        >
-          <div className="text-left">
-            <p className="text-xs font-bold">AVA AI Growth Machine</p>
-            <p className="text-[10px]" style={{ color: "var(--muted)" }}>
-              Apify + Web Scraping + Instantly &bull; Pipeline 100% automatisé
-            </p>
-          </div>
-          <div className="w-px h-8" style={{ background: "var(--border)" }} />
-          <div className="text-center">
-            <p className="text-xs font-bold" style={{ color: "#22c55e" }}>Coût: 0 EUR</p>
-            <p className="text-[10px]" style={{ color: "var(--muted)" }}>100% gratuit</p>
-          </div>
-          <div className="w-px h-8" style={{ background: "var(--border)" }} />
-          <div className="text-center">
-            <p className="text-xs font-bold" style={{ color: "#818cf8" }}>{stats.totalLeads.toLocaleString()} leads</p>
-            <p className="text-[10px]" style={{ color: "var(--muted)" }}>{Object.keys(stats.byVille).length} villes France</p>
-          </div>
-        </div>
-      </div>
+      <p className="text-center text-xs mt-10" style={{ color: "var(--text-muted)" }}>
+        AVA GTM &middot; Pipeline automatise
+      </p>
     </div>
+  );
+}
+
+/* ---------- Sub-components ---------- */
+
+function MetricCard({
+  icon,
+  label,
+  value,
+  sub,
+  accent,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  sub: string;
+  accent?: boolean;
+}) {
+  return (
+    <div
+      className="rounded-xl p-5 border border-[var(--border)]"
+      style={{ background: "var(--bg-raised)" }}
+    >
+      <div className="flex items-center gap-2 mb-3" style={{ color: "var(--text-muted)" }}>
+        {icon}
+        <span className="text-xs font-medium uppercase tracking-wider">{label}</span>
+      </div>
+      <p className="text-2xl font-semibold tracking-tight" style={accent ? { color: "var(--green)" } : undefined}>
+        {value}
+      </p>
+      <p className="text-xs mt-1" style={{ color: "var(--text-muted)" }}>{sub}</p>
+    </div>
+  );
+}
+
+function SmallStat({
+  label,
+  value,
+  caption,
+}: {
+  label: string;
+  value: number | string;
+  caption: string;
+}) {
+  const display = typeof value === "number" ? value.toLocaleString() : value;
+  return (
+    <div className="rounded-lg p-3 border border-[var(--border)]" style={{ background: "var(--bg-raised)" }}>
+      <p className="text-xs font-medium" style={{ color: "var(--text-muted)" }}>{label}</p>
+      <p className="text-lg font-semibold mt-0.5">{display}</p>
+      <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>{caption}</p>
+    </div>
+  );
+}
+
+function StatusDot({ status }: { status: string }) {
+  const color =
+    status === "active" || status === "completed"
+      ? "var(--green)"
+      : status === "paused"
+        ? "var(--amber)"
+        : "var(--text-muted)";
+  return (
+    <span
+      className="w-2 h-2 rounded-full inline-block"
+      style={{ background: color }}
+    />
   );
 }

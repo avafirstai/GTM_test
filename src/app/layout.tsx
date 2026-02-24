@@ -21,7 +21,7 @@ export default function RootLayout({
     <html lang="fr">
       <body>
         <Sidebar />
-        <main className="ml-56 min-h-screen">{children}</main>
+        <main className="ml-[220px] min-h-screen">{children}</main>
       </body>
     </html>
   );
