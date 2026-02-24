@@ -5,14 +5,29 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export async function GET() {
-  // Only select the columns needed for aggregation (no name/address = less data)
-  const { data: leads, error } = await supabase
-    .from("gtm_leads")
-    .select("city, phone, website, email, category, rating, reviews, score");
+  // Paginate to get ALL leads (Supabase REST defaults to max 1000 rows per request)
+  type StatLead = { city: string; phone: string; website: string; email: string; category: string; rating: number; reviews: number; score: number };
+  const leads: StatLead[] = [];
+  const PAGE = 1000;
+  let from = 0;
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  for (;;) {
+    const { data: page, error: pageErr } = await supabase
+      .from("gtm_leads")
+      .select("city, phone, website, email, category, rating, reviews, score")
+      .range(from, from + PAGE - 1);
+
+    if (pageErr) {
+      return NextResponse.json({ error: pageErr.message }, { status: 500 });
+    }
+    if (!page || page.length === 0) break;
+    leads.push(...page);
+    if (page.length < PAGE) break;
+    from += PAGE;
   }
+
+  const error = null;
+  void error; // consumed below for backward compat
 
   const totalLeads = leads.length;
   const withEmail = leads.filter((l) => l.email && l.email.trim() !== "").length;

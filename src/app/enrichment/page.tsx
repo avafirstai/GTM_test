@@ -88,6 +88,7 @@ interface EnrichJob {
   progress_enriched: number;
   summary: EnrichSummary | null;
   source_stats: Record<string, SourceStat> | null;
+  lead_results: EnrichResultItem[] | null;
   error: string | null;
   created_at: string;
   completed_at: string | null;
@@ -237,6 +238,9 @@ export default function EnrichmentPage() {
     });
     if (job.summary) setSummary(job.summary);
     if (job.source_stats) setSourceStats(job.source_stats);
+    if (job.lead_results && job.lead_results.length > 0) {
+      setLeadResults(job.lead_results);
+    }
   }
 
   /* ---------------------------------------------------------------- */

@@ -268,6 +268,17 @@ export async function POST(request: Request) {
               : 0,
         };
 
+        // Persist individual lead results for restore on page revisit
+        const leadResults = allResults.map((r) => ({
+          leadId: r.leadId,
+          bestEmail: r.bestEmail ?? null,
+          bestPhone: r.bestPhone ?? null,
+          dirigeant: r.dirigeant ?? null,
+          siret: r.siret ?? null,
+          confidence: r.finalConfidence,
+          sourcesTried: r.sourcesTried,
+        }));
+
         // Mark job completed in DB
         await supabase
           .from("gtm_enrichment_jobs")
@@ -277,6 +288,7 @@ export async function POST(request: Request) {
             progress_enriched: enrichedCount,
             summary,
             source_stats: sourceStats,
+            lead_results: leadResults,
             updated_at: new Date().toISOString(),
             completed_at: new Date().toISOString(),
           })
