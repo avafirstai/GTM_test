@@ -771,9 +771,11 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
                   </td>
                   <td className="px-3 py-3 text-center">
                     {lead.enrichment_status === "enriched" ? (
-                      <span style={{ color: "var(--green)" }}>&#10003;</span>
+                      <span style={{ color: "var(--green)" }} title="Enrichi">&#10003;</span>
+                    ) : lead.enrichment_status === "failed" && (lead.telephone || lead.email) ? (
+                      <span style={{ color: "#f59e0b" }} title="Partiel — donnees existantes, rien de nouveau">&#126;</span>
                     ) : lead.enrichment_status === "failed" ? (
-                      <span style={{ color: "#ef4444" }} title="Enrichissement echoue">&#10007;</span>
+                      <span style={{ color: "#ef4444" }} title="Aucune donnee trouvee">&#10007;</span>
                     ) : lead.enrichment_status === "skipped" ? (
                       <span style={{ color: "#f59e0b" }} title="Timeout / skip">&#x23F1;</span>
                     ) : (

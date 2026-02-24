@@ -143,12 +143,31 @@ export async function POST(request: Request) {
   }
 
   if (!leads || leads.length === 0) {
-    return NextResponse.json({
-      success: true,
-      processed: 0,
-      enriched: 0,
-      results: [],
-      message: "Aucun lead a enrichir",
+    // Return SSE stream (not JSON) so the frontend reader handles it uniformly
+    const enc = new TextEncoder();
+    const emptyStream = new ReadableStream({
+      start(ctrl) {
+        ctrl.enqueue(
+          enc.encode(
+            `event: done\ndata: ${JSON.stringify({
+              processed: 0,
+              enriched: 0,
+              failed: 0,
+              skipped: 0,
+              summary: null,
+              sourceStats: {},
+            })}\n\n`,
+          ),
+        );
+        ctrl.close();
+      },
+    });
+    return new Response(emptyStream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+      },
     });
   }
 
@@ -261,7 +280,7 @@ export async function POST(request: Request) {
               const currentAttempts = (leads.find((l) => l.id === lead.id) as Record<string, unknown>)?.enrichment_attempts;
               const attempts = (typeof currentAttempts === "number" ? currentAttempts : 0) + 1;
 
-              supabase
+              const { error: dbErrFail } = await supabase
                 .from("gtm_leads")
                 .update({
                   enrichment_status: newStatus,
@@ -269,16 +288,15 @@ export async function POST(request: Request) {
                   enrichment_failed_at: new Date().toISOString(),
                   updated_at: new Date().toISOString(),
                 })
-                .eq("id", lead.id)
-                .then(({ error: dbErr }) => {
-                  if (dbErr) {
-                    send("db_warning", {
-                      leadId: lead.id,
-                      error: dbErr.message,
-                      phase: "mark_failed",
-                    });
-                  }
+                .eq("id", lead.id);
+
+              if (dbErrFail) {
+                send("db_warning", {
+                  leadId: lead.id,
+                  error: dbErrFail.message,
+                  phase: "mark_failed",
                 });
+              }
 
               send("lead_error", {
                 leadId: lead.id,
@@ -348,24 +366,23 @@ export async function POST(request: Request) {
               if (result.mxProvider) updateData.mx_provider = result.mxProvider;
               updateData.has_mx = result.hasMx;
 
-              supabase
+              const { error: dbErrEnrich } = await supabase
                 .from("gtm_leads")
                 .update(updateData)
-                .eq("id", result.leadId)
-                .then(({ error: dbErr }) => {
-                  if (dbErr) {
-                    send("db_warning", {
-                      leadId: result.leadId,
-                      error: dbErr.message,
-                      phase: "save_enriched",
-                    });
-                  }
+                .eq("id", result.leadId);
+
+              if (dbErrEnrich) {
+                send("db_warning", {
+                  leadId: result.leadId,
+                  error: dbErrEnrich.message,
+                  phase: "save_enriched",
                 });
+              }
             } else {
               // Nothing found — mark as failed
               failedCount++;
 
-              supabase
+              const { error: dbErrNone } = await supabase
                 .from("gtm_leads")
                 .update({
                   enrichment_status: "failed",
@@ -374,16 +391,15 @@ export async function POST(request: Request) {
                   enrichment_source: result.sourcesTried.join(","),
                   updated_at: new Date().toISOString(),
                 })
-                .eq("id", result.leadId)
-                .then(({ error: dbErr }) => {
-                  if (dbErr) {
-                    send("db_warning", {
-                      leadId: result.leadId,
-                      error: dbErr.message,
-                      phase: "mark_failed",
-                    });
-                  }
+                .eq("id", result.leadId);
+
+              if (dbErrNone) {
+                send("db_warning", {
+                  leadId: result.leadId,
+                  error: dbErrNone.message,
+                  phase: "mark_failed",
                 });
+              }
             }
 
             // Emit lead result

@@ -478,7 +478,10 @@ export default function EnrichmentPage() {
           }),
         });
 
-        if (!res.ok || !res.body) {
+        // Detect JSON response (happens when 0 leads match the query)
+        // Backend returns NextResponse.json() instead of SSE stream in that case
+        const contentType = res.headers.get("content-type") || "";
+        if (contentType.includes("application/json")) {
           const data = await res.json();
           stopTimer();
           if (data.success && data.processed === 0) {
@@ -488,7 +491,14 @@ export default function EnrichmentPage() {
             return;
           }
           setStatus("error");
-          setErrorMsg(data.error || `HTTP ${res.status}`);
+          setErrorMsg(data.error || "Reponse inattendue du serveur");
+          return;
+        }
+
+        if (!res.ok || !res.body) {
+          stopTimer();
+          setStatus("error");
+          setErrorMsg(`HTTP ${res.status}`);
           return;
         }
 
@@ -578,9 +588,16 @@ export default function EnrichmentPage() {
           });
         }
 
+        // Safety: if stream ended but no done/error event was received,
+        // force status out of "running" to prevent infinite spinner
         const currentJobIdAfterStream = latestJobIdRef.current;
         if (currentJobIdAfterStream) {
+          // Stream ended prematurely — poll for job completion
           startPolling(currentJobIdAfterStream);
+        } else {
+          // No jobId = stream ended without creating a job, or done event already fired
+          stopTimer();
+          setStatus((prev) => prev === "running" ? "done" : prev);
         }
       } catch (err) {
         if ((err as Error).name === "AbortError") return;
