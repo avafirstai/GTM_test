@@ -97,6 +97,59 @@ interface EnrichJob {
 type RunStatus = "idle" | "running" | "done" | "error";
 
 /* ================================================================== */
+/*  JSONB safe parsers — validate raw Supabase data before state       */
+/* ================================================================== */
+
+function safeSummary(raw: unknown): EnrichSummary | null {
+  if (!raw || typeof raw !== "object") return null;
+  const obj = raw as Record<string, unknown>;
+  return {
+    totalEmails: typeof obj.totalEmails === "number" ? obj.totalEmails : 0,
+    totalPhones: typeof obj.totalPhones === "number" ? obj.totalPhones : 0,
+    totalSiret: typeof obj.totalSiret === "number" ? obj.totalSiret : 0,
+    totalDirigeants: typeof obj.totalDirigeants === "number" ? obj.totalDirigeants : 0,
+    avgConfidence: typeof obj.avgConfidence === "number" ? obj.avgConfidence : 0,
+    avgDurationMs: typeof obj.avgDurationMs === "number" ? obj.avgDurationMs : 0,
+  };
+}
+
+function safeSourceStats(raw: unknown): Record<string, SourceStat> | null {
+  if (!raw || typeof raw !== "object") return null;
+  const result: Record<string, SourceStat> = {};
+  for (const [key, val] of Object.entries(raw as Record<string, unknown>)) {
+    if (!val || typeof val !== "object") continue;
+    const v = val as Record<string, unknown>;
+    result[key] = {
+      tried: typeof v.tried === "number" ? v.tried : 0,
+      emailFound: typeof v.emailFound === "number" ? v.emailFound : 0,
+      phoneFound: typeof v.phoneFound === "number" ? v.phoneFound : 0,
+      siretFound: typeof v.siretFound === "number" ? v.siretFound : 0,
+    };
+  }
+  return Object.keys(result).length > 0 ? result : null;
+}
+
+function safeLeadResult(raw: unknown): EnrichResultItem | null {
+  if (!raw || typeof raw !== "object") return null;
+  const obj = raw as Record<string, unknown>;
+  if (typeof obj.leadId !== "string") return null;
+  return {
+    leadId: obj.leadId,
+    bestEmail: typeof obj.bestEmail === "string" ? obj.bestEmail : null,
+    bestPhone: typeof obj.bestPhone === "string" ? obj.bestPhone : null,
+    dirigeant: typeof obj.dirigeant === "string" ? obj.dirigeant : null,
+    siret: typeof obj.siret === "string" ? obj.siret : null,
+    confidence: typeof obj.confidence === "number" ? obj.confidence : 0,
+    sourcesTried: Array.isArray(obj.sourcesTried) ? (obj.sourcesTried as string[]) : [],
+  };
+}
+
+function safeLeadResults(raw: unknown): EnrichResultItem[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map(safeLeadResult).filter((r): r is EnrichResultItem => r !== null);
+}
+
+/* ================================================================== */
 /*  Source Configuration                                                */
 /* ================================================================== */
 
@@ -157,10 +210,11 @@ export default function EnrichmentPage() {
   const [showAllCities, setShowAllCities] = useState(false);
   const [showSourceDetail, setShowSourceDetail] = useState(false);
 
-  // Refs for cleanup
+  // Refs for cleanup + stale closure fix
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const latestJobIdRef = useRef<string | null>(null);
 
   /* ---------------------------------------------------------------- */
   /*  Cleanup on unmount                                               */
@@ -231,16 +285,17 @@ export default function EnrichmentPage() {
     setJobId(job.id);
     setStatus("done");
     setProgress({
-      processed: job.progress_processed,
-      total: job.progress_total,
-      enriched: job.progress_enriched,
+      processed: job.progress_processed ?? 0,
+      total: job.progress_total ?? 0,
+      enriched: job.progress_enriched ?? 0,
       percent: 100,
     });
-    if (job.summary) setSummary(job.summary);
-    if (job.source_stats) setSourceStats(job.source_stats);
-    if (job.lead_results && job.lead_results.length > 0) {
-      setLeadResults(job.lead_results);
-    }
+    const parsedSummary = safeSummary(job.summary);
+    if (parsedSummary) setSummary(parsedSummary);
+    const parsedStats = safeSourceStats(job.source_stats);
+    if (parsedStats) setSourceStats(parsedStats);
+    const parsedResults = safeLeadResults(job.lead_results);
+    if (parsedResults.length > 0) setLeadResults(parsedResults);
   }
 
   /* ---------------------------------------------------------------- */
@@ -336,6 +391,7 @@ export default function EnrichmentPage() {
       setSourceStats(null);
       setErrorMsg(null);
       setJobId(null);
+      latestJobIdRef.current = null;
       startTimer();
 
       // Abort previous stream if any
@@ -390,7 +446,9 @@ export default function EnrichmentPage() {
               const data = JSON.parse(eventData);
 
               if (eventType === "job_created") {
-                setJobId(data.jobId as string);
+                const jid = typeof data.jobId === "string" ? data.jobId : null;
+                setJobId(jid);
+                latestJobIdRef.current = jid;
               } else if (eventType === "progress") {
                 setProgress({
                   processed: data.processed as number,
@@ -399,12 +457,15 @@ export default function EnrichmentPage() {
                   percent: data.percent as number,
                 });
               } else if (eventType === "lead_result") {
-                setLeadResults((prev) => [...prev, data as EnrichResultItem]);
+                const parsed = safeLeadResult(data);
+                if (parsed) setLeadResults((prev) => [...prev, parsed]);
               } else if (eventType === "done") {
                 stopTimer();
                 setStatus("done");
-                setSummary(data.summary as EnrichSummary);
-                setSourceStats(data.sourceStats as Record<string, SourceStat>);
+                const parsedSummary = safeSummary(data.summary);
+                if (parsedSummary) setSummary(parsedSummary);
+                const parsedStats = safeSourceStats(data.sourceStats);
+                if (parsedStats) setSourceStats(parsedStats);
                 setProgress((prev) => ({ ...prev, percent: 100 }));
               } else if (eventType === "error") {
                 stopTimer();
@@ -418,16 +479,20 @@ export default function EnrichmentPage() {
         }
 
         // If stream ended without a "done" event, start polling as fallback
-        if (status === "running" && jobId) {
-          startPolling(jobId);
+        // Use ref instead of stale closure values (status/jobId are captured at call time)
+        const currentJobIdAfterStream = latestJobIdRef.current;
+        if (currentJobIdAfterStream) {
+          startPolling(currentJobIdAfterStream);
         }
       } catch (err) {
         if ((err as Error).name === "AbortError") return;
         stopTimer();
 
         // If we have a jobId, start polling (server may still be processing)
-        if (jobId) {
-          startPolling(jobId);
+        // Use ref — closure jobId is stale (still null from setJobId batching)
+        const currentJobIdOnError = latestJobIdRef.current;
+        if (currentJobIdOnError) {
+          startPolling(currentJobIdOnError);
         } else {
           setStatus("error");
           setErrorMsg("Connexion perdue");
@@ -752,25 +817,25 @@ export default function EnrichmentPage() {
                         </span>
                       </div>
                       <div className="flex gap-3 text-[10px]" style={{ color: "var(--text-muted)" }}>
-                        {stat.emailFound > 0 && (
+                        {(stat?.emailFound ?? 0) > 0 && (
                           <span>
                             <Mail size={9} className="inline mr-0.5" style={{ verticalAlign: "-1px" }} />
                             {stat.emailFound}
                           </span>
                         )}
-                        {stat.phoneFound > 0 && (
+                        {(stat?.phoneFound ?? 0) > 0 && (
                           <span>
                             <Phone size={9} className="inline mr-0.5" style={{ verticalAlign: "-1px" }} />
                             {stat.phoneFound}
                           </span>
                         )}
-                        {stat.siretFound > 0 && (
+                        {(stat?.siretFound ?? 0) > 0 && (
                           <span>
                             <Hash size={9} className="inline mr-0.5" style={{ verticalAlign: "-1px" }} />
                             {stat.siretFound}
                           </span>
                         )}
-                        <span className="ml-auto">{stat.tried} essais</span>
+                        <span className="ml-auto">{stat?.tried ?? 0} essais</span>
                       </div>
                     </div>
                   );
@@ -840,7 +905,7 @@ export default function EnrichmentPage() {
                         </span>
                       </div>
                       <div className="flex gap-1 flex-wrap">
-                        {r.sourcesTried.map((s) => (
+                        {(r.sourcesTried ?? []).map((s) => (
                           <span
                             key={s}
                             className="text-[9px] px-1.5 py-0.5 rounded"
