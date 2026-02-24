@@ -25,14 +25,6 @@ export interface DashboardData {
     lastUpdated: string;
   };
   pipeline: { name: string; count: number; color: string }[];
-  apifyRuns: {
-    runId: string;
-    datasetId: string;
-    status: string;
-    queriesCount: number;
-    verticale: string;
-    resultsCount?: number;
-  }[];
   enrichment: {
     method: string;
     cost: string;

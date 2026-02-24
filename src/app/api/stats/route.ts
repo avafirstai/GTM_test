@@ -96,21 +96,6 @@ export async function GET() {
     { name: "RDV Booke", count: 0, color: "#10b981" },
   ];
 
-  // Apify runs (static — from original scraping config)
-  const apifyRuns = [
-    { runId: "WMS8gIAQ5rqzyghf0", datasetId: "1R95ndihhQhYmX7Pv", status: "SUCCEEDED", queriesCount: 30, verticale: "Formation Paris+Lyon", resultsCount: 447 },
-    { runId: "JH3n4GsiBgmTidFfm", datasetId: "d75bTGRX0avyXyzJ8", status: "SUCCEEDED", queriesCount: 50, verticale: "Formation France Batch 1", resultsCount: 579 },
-    { runId: "gLcR1g5PhdOFUwQRw", datasetId: "KVOtVsZexVIpJCvd7", status: "SUCCEEDED", queriesCount: 50, verticale: "Formation + Auto-ecole", resultsCount: 395 },
-    { runId: "BwMU7MRjkqHZpNKL5", datasetId: "fBvNu8dFcJUjiwZAC", status: "SUCCEEDED", queriesCount: 50, verticale: "Multi-verticale Chunk 3", resultsCount: 947 },
-    { runId: "XFD7PTtDDYQdWODxO", datasetId: "KFWY4BoPSH7GwZMig", status: "SUCCEEDED", queriesCount: 50, verticale: "Multi-verticale Chunk 4", resultsCount: 925 },
-    { runId: "mOb8hvAId5vETHbYP", datasetId: "mKkV3YSzTfRSKPqWz", status: "SUCCEEDED", queriesCount: 50, verticale: "Multi-verticale Chunk 5", resultsCount: 912 },
-    { runId: "EBJwkNWs9qnOnDr2H", datasetId: "SlXorLlzSLhf8CfcU", status: "SUCCEEDED", queriesCount: 50, verticale: "Multi-verticale Chunk 6", resultsCount: 921 },
-    { runId: "VvsH1PuPTHa1vnIe7", datasetId: "6vTJdV8EPwbYz8qVR", status: "SUCCEEDED", queriesCount: 50, verticale: "Multi-verticale Chunk 7", resultsCount: 914 },
-    { runId: "si1VpqXtNqdk1JK21", datasetId: "79cWMFzVOeYKTNj76", status: "SUCCEEDED", queriesCount: 50, verticale: "Multi-verticale Chunk 8", resultsCount: 855 },
-    { runId: "UWkYvTtUA3E6OAJde", datasetId: "fB8yPUVaSzNYiw7XB", status: "SUCCEEDED", queriesCount: 50, verticale: "Multi-verticale Chunk 9", resultsCount: 870 },
-    { runId: "bivuRtrsbFZhN2mDs", datasetId: "JHdQYQit3CPoZMfe1", status: "SUCCEEDED", queriesCount: 50, verticale: "Multi-verticale Chunk 10", resultsCount: 852 },
-  ];
-
   const enrichment = {
     method: "Website scraping (aiohttp + BeautifulSoup)",
     cost: "0 EUR",
@@ -145,7 +130,6 @@ export async function GET() {
   return NextResponse.json({
     stats,
     pipeline,
-    apifyRuns,
     enrichment,
     categoryEmailRates,
     cityEmailRates,

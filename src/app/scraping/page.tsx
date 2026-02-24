@@ -1,202 +1,696 @@
 "use client";
 
-import { useStats } from "@/lib/useStats";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { parseSSEEvents } from "@/lib/parseSSE";
+import { VERTICALES, VILLES_FRANCE } from "@/lib/verticales";
+import type { Verticale } from "@/lib/verticales";
 import {
-  Search,
   MapPin,
   Tag,
   CheckCircle,
   Clock,
   XCircle,
+  Loader2,
+  ArrowRight,
+  Zap,
+  Globe,
 } from "lucide-react";
 
-export default function ScrapingPage() {
-  const { data, loading } = useStats();
+/* ------------------------------------------------------------------ */
+/*  Types                                                              */
+/* ------------------------------------------------------------------ */
 
-  if (loading || !data) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="w-5 h-5 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin" />
-      </div>
-    );
+type Status = "idle" | "running" | "done" | "error";
+
+interface ComboStatus {
+  verticale: string;
+  verticaleId: string;
+  ville: string;
+  status: "pending" | "running" | "done" | "error";
+  newLeads: number;
+  duplicates: number;
+  totalFound: number;
+  error?: string;
+}
+
+interface ScrapingJob {
+  id: string;
+  status: string;
+  verticale_ids: string[];
+  villes: string[];
+  total_combos: number;
+  processed_combos: number;
+  total_new_leads: number;
+  total_duplicates: number;
+  summary: Record<string, unknown> | null;
+  created_at: string;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Page                                                               */
+/* ------------------------------------------------------------------ */
+
+export default function ScrapingPage() {
+  // Selection state
+  const [selectedVerts, setSelectedVerts] = useState<Set<string>>(new Set());
+  const [selectedVilles, setSelectedVilles] = useState<Set<string>>(new Set());
+
+  // Scraping state
+  const [status, setStatus] = useState<Status>("idle");
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [progress, setProgress] = useState({ processed: 0, total: 0, percent: 0 });
+  const [combos, setCombos] = useState<ComboStatus[]>([]);
+  const [totalNewLeads, setTotalNewLeads] = useState(0);
+  const [totalDuplicates, setTotalDuplicates] = useState(0);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // History
+  const [history, setHistory] = useState<ScrapingJob[]>([]);
+
+  // Timer
+  const [elapsed, setElapsed] = useState(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const startTimer = useCallback(() => {
+    setElapsed(0);
+    timerRef.current = setInterval(() => setElapsed((e) => e + 1), 1000);
+  }, []);
+
+  const stopTimer = useCallback(() => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
+
+  // Fetch history on mount
+  useEffect(() => {
+    fetch("/api/scrape/jobs?limit=10")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.success && d.jobs) setHistory(d.jobs);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Cleanup timer on unmount
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+    };
+  }, []);
+
+  /* ---------------------------------------------------------------- */
+  /*  Selection helpers                                                */
+  /* ---------------------------------------------------------------- */
+
+  function toggleVert(id: string) {
+    setSelectedVerts((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   }
 
-  const { stats, apifyRuns } = data;
-  const totalQueries = apifyRuns.reduce((s, r) => s + r.queriesCount, 0);
-  const totalResults = apifyRuns.reduce((s, r) => s + (r.resultsCount ?? 0), 0);
-  const succeededRuns = apifyRuns.filter((r) => r.status === "SUCCEEDED").length;
-  const progressPct = Math.round((totalQueries / 930) * 100);
-  const villeEntries = Object.entries(stats.byVille).sort((a, b) => b[1] - a[1]);
-  const verticaleEntries = Object.entries(stats.byVerticale).sort((a, b) => b[1] - a[1]);
+  function selectVertsByTier(tier: 1 | 2 | 3 | null) {
+    if (tier === null) {
+      setSelectedVerts(new Set());
+    } else {
+      setSelectedVerts(new Set(VERTICALES.filter((v) => v.tier <= tier).map((v) => v.id)));
+    }
+  }
+
+  function selectAllVerts() {
+    setSelectedVerts(new Set(VERTICALES.map((v) => v.id)));
+  }
+
+  function toggleVille(v: string) {
+    setSelectedVilles((prev) => {
+      const next = new Set(prev);
+      if (next.has(v)) next.delete(v);
+      else next.add(v);
+      return next;
+    });
+  }
+
+  function selectTopVilles(n: number) {
+    setSelectedVilles(new Set(VILLES_FRANCE.slice(0, n)));
+  }
+
+  function selectAllVilles() {
+    setSelectedVilles(new Set(VILLES_FRANCE));
+  }
+
+  /* ---------------------------------------------------------------- */
+  /*  Estimation                                                       */
+  /* ---------------------------------------------------------------- */
+
+  const selectedVertList = VERTICALES.filter((v) => selectedVerts.has(v.id));
+  const totalCategories = selectedVertList.reduce(
+    (sum, v) => sum + v.googleMapsCategories.length,
+    0,
+  );
+  const totalCombos = selectedVerts.size * selectedVilles.size;
+  const estimatedRequests = totalCategories * selectedVilles.size;
+  const estimatedLeads = totalCombos * 18; // ~18 unique leads per combo avg
+  const estimatedCost = estimatedRequests * 0.032;
+  const estimatedTimeMin = Math.ceil((estimatedRequests * 0.15 + totalCombos * 0.3) / 60);
+
+  /* ---------------------------------------------------------------- */
+  /*  Run scraping                                                     */
+  /* ---------------------------------------------------------------- */
+
+  async function runScraping() {
+    if (selectedVerts.size === 0 || selectedVilles.size === 0) return;
+
+    setStatus("running");
+    setJobId(null);
+    setErrorMsg(null);
+    setTotalNewLeads(0);
+    setTotalDuplicates(0);
+    setCombos([]);
+    setProgress({ processed: 0, total: totalCombos, percent: 0 });
+    startTimer();
+
+    try {
+      const res = await fetch("/api/scrape/stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          verticaleIds: Array.from(selectedVerts),
+          villes: Array.from(selectedVilles),
+        }),
+      });
+
+      if (!res.ok || !res.body) {
+        const errText = await res.text().catch(() => "Unknown error");
+        throw new Error(`HTTP ${res.status}: ${errText.slice(0, 200)}`);
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let sseBuffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        sseBuffer += decoder.decode(value, { stream: true });
+        sseBuffer = parseSSEEvents(sseBuffer, (eventType, rawData) => {
+          let data: Record<string, unknown>;
+          try {
+            data = JSON.parse(rawData);
+          } catch {
+            return;
+          }
+
+          if (eventType === "job_created") {
+            const jid = typeof data.jobId === "string" ? data.jobId : null;
+            setJobId(jid);
+          } else if (eventType === "combo_start") {
+            setCombos((prev) => [
+              ...prev,
+              {
+                verticale: String(data.verticale ?? ""),
+                verticaleId: String(data.verticaleId ?? ""),
+                ville: String(data.ville ?? ""),
+                status: "running",
+                newLeads: 0,
+                duplicates: 0,
+                totalFound: 0,
+              },
+            ]);
+          } else if (eventType === "combo_done") {
+            setCombos((prev) =>
+              prev.map((c) =>
+                c.verticaleId === data.verticaleId && c.ville === data.ville
+                  ? {
+                      ...c,
+                      status: "done" as const,
+                      newLeads: typeof data.newLeads === "number" ? data.newLeads : 0,
+                      duplicates: typeof data.duplicates === "number" ? data.duplicates : 0,
+                      totalFound: typeof data.totalFound === "number" ? data.totalFound : 0,
+                    }
+                  : c,
+              ),
+            );
+          } else if (eventType === "combo_error") {
+            setCombos((prev) =>
+              prev.map((c) =>
+                c.verticaleId === data.verticaleId && c.ville === data.ville
+                  ? { ...c, status: "error" as const, error: String(data.error ?? "") }
+                  : c,
+              ),
+            );
+          } else if (eventType === "progress") {
+            setProgress({
+              processed: typeof data.processed === "number" ? data.processed : 0,
+              total: typeof data.total === "number" ? data.total : 0,
+              percent: typeof data.percent === "number" ? data.percent : 0,
+            });
+            if (typeof data.totalNewLeads === "number") setTotalNewLeads(data.totalNewLeads);
+            if (typeof data.totalDuplicates === "number") setTotalDuplicates(data.totalDuplicates);
+          } else if (eventType === "done") {
+            stopTimer();
+            setStatus("done");
+            if (typeof data.totalNewLeads === "number") setTotalNewLeads(data.totalNewLeads);
+            if (typeof data.totalDuplicates === "number") setTotalDuplicates(data.totalDuplicates);
+            setProgress((prev) => ({ ...prev, percent: 100 }));
+          } else if (eventType === "error") {
+            stopTimer();
+            setStatus("error");
+            setErrorMsg(typeof data.message === "string" ? data.message : "Erreur inconnue");
+          }
+        });
+      }
+
+      // If stream ended without done/error, mark done
+      if (status === "running") {
+        stopTimer();
+        setStatus("done");
+      }
+    } catch (err) {
+      stopTimer();
+      setStatus("error");
+      setErrorMsg(err instanceof Error ? err.message : "Erreur de connexion");
+    }
+
+    // Refresh history
+    fetch("/api/scrape/jobs?limit=10")
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.success && d.jobs) setHistory(d.jobs);
+      })
+      .catch(() => {});
+  }
+
+  /* ---------------------------------------------------------------- */
+  /*  Render                                                           */
+  /* ---------------------------------------------------------------- */
+
+  const fmtTime = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
   return (
-    <div className="p-8 max-w-5xl mx-auto">
+    <div className="p-8 max-w-6xl mx-auto">
       {/* Header */}
       <div className="mb-8">
-        <h1 className="text-xl font-semibold tracking-tight">Scraping</h1>
-        <p className="text-sm mt-1" style={{ color: "var(--text-muted)" }}>
-          Apify Google Maps &middot; {totalQueries}/930 requetes &middot;{" "}
-          {villeEntries.length} villes &times; {verticaleEntries.length} categories
-        </p>
-      </div>
-
-      {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <StatCard label="Requetes lancees" value={String(totalQueries)} />
-        <StatCard label={`Runs (${succeededRuns}/${apifyRuns.length})`} value={String(apifyRuns.length)} accent="green" />
-        <StatCard label="Leads uniques" value={stats.totalLeads.toLocaleString()} accent="green" />
-        <StatCard label="Restantes" value={String(930 - totalQueries)} accent="amber" />
-      </div>
-
-      {/* Progress */}
-      <div
-        className="rounded-xl border border-[var(--border)] mb-6"
-        style={{ background: "var(--bg-raised)" }}
-      >
-        <div className="px-5 py-4 border-b border-[var(--border)] flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Search size={16} style={{ color: "var(--text-muted)" }} />
-            <h2 className="text-sm font-medium">Progression</h2>
-          </div>
-          <span className="text-sm font-semibold" style={{ color: "var(--accent)" }}>
-            {progressPct}%
-          </span>
-        </div>
-        <div className="p-5">
+        <div className="flex items-center gap-3">
           <div
-            className="w-full h-2 rounded-full"
-            style={{ background: "var(--bg)" }}
+            className="w-10 h-10 rounded-xl flex items-center justify-center"
+            style={{ background: "var(--accent-subtle)" }}
           >
-            <div
-              className="h-2 rounded-full transition-all duration-700"
-              style={{
-                width: `${progressPct}%`,
-                background: "var(--accent)",
-              }}
-            />
+            <Globe size={20} style={{ color: "var(--accent)" }} />
           </div>
-          <div className="flex justify-between mt-2">
-            <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-              {totalQueries} requetes &rarr; {totalResults.toLocaleString()} resultats
-            </p>
-            <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-              {930 - totalQueries} restantes
+          <div>
+            <h1 className="text-xl font-semibold tracking-tight">Scraping</h1>
+            <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+              Google Places API &middot; {VERTICALES.length} verticales &middot;{" "}
+              {VILLES_FRANCE.length} villes
             </p>
           </div>
         </div>
       </div>
 
-      {/* Runs */}
-      <div
-        className="rounded-xl border border-[var(--border)] mb-6"
-        style={{ background: "var(--bg-raised)" }}
-      >
-        <div className="px-5 py-4 border-b border-[var(--border)]">
-          <h2 className="text-sm font-medium">
-            Runs Apify ({apifyRuns.length})
-          </h2>
-        </div>
-        <div className="divide-y divide-[var(--border)]">
-          {apifyRuns.map((run) => (
-            <RunRow
-              key={run.runId}
-              verticale={run.verticale}
-              runId={run.runId}
-              status={run.status}
-              queries={run.queriesCount}
-              results={run.resultsCount ?? 0}
-            />
-          ))}
-        </div>
-      </div>
-
-      {/* Geo coverage */}
-      <div
-        className="rounded-xl border border-[var(--border)] mb-6"
-        style={{ background: "var(--bg-raised)" }}
-      >
-        <div className="px-5 py-4 border-b border-[var(--border)] flex items-center gap-2">
-          <MapPin size={16} style={{ color: "var(--text-muted)" }} />
-          <h2 className="text-sm font-medium">
-            Couverture ({villeEntries.length} villes)
-          </h2>
-        </div>
-        <div className="p-5 grid grid-cols-3 md:grid-cols-5 lg:grid-cols-6 gap-2">
-          {villeEntries.map(([ville, count]) => (
+      {status === "idle" && (
+        <>
+          {/* Selection Grid */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+            {/* Verticales */}
             <div
-              key={ville}
-              className="p-2 rounded-lg text-center"
-              style={{ background: "var(--bg)" }}
+              className="rounded-xl border border-[var(--border)]"
+              style={{ background: "var(--bg-raised)" }}
             >
-              <p className="text-sm font-semibold" style={{ color: "var(--accent)" }}>
-                {count.toLocaleString()}
-              </p>
-              <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-                {ville}
-              </p>
+              <div className="px-5 py-4 border-b border-[var(--border)] flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Tag size={16} style={{ color: "var(--text-muted)" }} />
+                  <h2 className="text-sm font-medium">
+                    Verticales ({selectedVerts.size}/{VERTICALES.length})
+                  </h2>
+                </div>
+                <div className="flex gap-1.5">
+                  <QuickBtn label="Tout" onClick={selectAllVerts} />
+                  <QuickBtn label="T1" onClick={() => selectVertsByTier(1)} />
+                  <QuickBtn label="T1+T2" onClick={() => selectVertsByTier(2)} />
+                  <QuickBtn label="Aucun" onClick={() => selectVertsByTier(null)} />
+                </div>
+              </div>
+              <div className="p-4 grid grid-cols-1 gap-1.5 max-h-[420px] overflow-y-auto">
+                {VERTICALES.map((v) => (
+                  <VertChip
+                    key={v.id}
+                    vert={v}
+                    selected={selectedVerts.has(v.id)}
+                    onClick={() => toggleVert(v.id)}
+                  />
+                ))}
+              </div>
             </div>
-          ))}
-        </div>
-      </div>
 
-      {/* Categories */}
-      <div
-        className="rounded-xl border border-[var(--border)]"
-        style={{ background: "var(--bg-raised)" }}
-      >
-        <div className="px-5 py-4 border-b border-[var(--border)] flex items-center gap-2">
-          <Tag size={16} style={{ color: "var(--text-muted)" }} />
-          <h2 className="text-sm font-medium">
-            Categories ({verticaleEntries.length})
-          </h2>
-        </div>
-        <div className="p-5 flex flex-wrap gap-2">
-          {verticaleEntries.map(([cat, count]) => (
-            <span
-              key={cat}
-              className="text-xs px-3 py-1.5 rounded-full"
-              style={{
-                background: "var(--accent-subtle)",
-                color: "var(--accent-hover)",
-              }}
+            {/* Villes */}
+            <div
+              className="rounded-xl border border-[var(--border)]"
+              style={{ background: "var(--bg-raised)" }}
             >
-              {cat} ({count})
-            </span>
-          ))}
+              <div className="px-5 py-4 border-b border-[var(--border)] flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <MapPin size={16} style={{ color: "var(--text-muted)" }} />
+                  <h2 className="text-sm font-medium">
+                    Villes ({selectedVilles.size}/{VILLES_FRANCE.length})
+                  </h2>
+                </div>
+                <div className="flex gap-1.5">
+                  <QuickBtn label="Tout" onClick={selectAllVilles} />
+                  <QuickBtn label="Top 10" onClick={() => selectTopVilles(10)} />
+                  <QuickBtn label="Top 5" onClick={() => selectTopVilles(5)} />
+                  <QuickBtn label="Aucun" onClick={() => setSelectedVilles(new Set())} />
+                </div>
+              </div>
+              <div className="p-4 flex flex-wrap gap-2 max-h-[420px] overflow-y-auto">
+                {VILLES_FRANCE.map((v) => (
+                  <button
+                    key={v}
+                    onClick={() => toggleVille(v)}
+                    className="text-xs px-3 py-1.5 rounded-full transition-all cursor-pointer border"
+                    style={{
+                      background: selectedVilles.has(v) ? "var(--accent-subtle)" : "var(--bg)",
+                      color: selectedVilles.has(v) ? "var(--accent)" : "var(--text-secondary)",
+                      borderColor: selectedVilles.has(v) ? "var(--accent)" : "var(--border)",
+                    }}
+                  >
+                    {v}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Estimation + Launch */}
+          {selectedVerts.size > 0 && selectedVilles.size > 0 && (
+            <div
+              className="rounded-xl border border-[var(--border)] mb-6"
+              style={{ background: "var(--bg-raised)" }}
+            >
+              <div className="px-5 py-4 border-b border-[var(--border)] flex items-center gap-2">
+                <Zap size={16} style={{ color: "var(--accent)" }} />
+                <h2 className="text-sm font-medium">Estimation</h2>
+              </div>
+              <div className="p-5">
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-5">
+                  <EstCard label="Verticales" value={String(selectedVerts.size)} />
+                  <EstCard label="Villes" value={String(selectedVilles.size)} />
+                  <EstCard label="Combos" value={String(totalCombos)} />
+                  <EstCard
+                    label="Leads estimes"
+                    value={`~${estimatedLeads.toLocaleString()}`}
+                    accent
+                  />
+                  <EstCard
+                    label="Duree"
+                    value={`~${estimatedTimeMin} min`}
+                  />
+                </div>
+                <div className="flex items-center justify-between">
+                  <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                    {estimatedRequests} requetes API &middot; cout estime:{" "}
+                    <span style={{ color: estimatedCost < 6.25 ? "var(--green)" : "var(--amber)" }}>
+                      ${estimatedCost.toFixed(2)}
+                    </span>
+                    {estimatedCost < 6.25 && (
+                      <span style={{ color: "var(--green)" }}> (couvert par credits gratuits)</span>
+                    )}
+                  </p>
+                  <button
+                    onClick={runScraping}
+                    className="px-6 py-2.5 rounded-lg text-sm font-semibold text-white transition-all hover:opacity-90 cursor-pointer"
+                    style={{ background: "var(--accent)" }}
+                  >
+                    Lancer le scraping
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Running / Done / Error */}
+      {status !== "idle" && (
+        <div className="space-y-6">
+          {/* Progress Header */}
+          <div
+            className="rounded-xl border border-[var(--border)]"
+            style={{ background: "var(--bg-raised)" }}
+          >
+            <div className="px-5 py-4 border-b border-[var(--border)] flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                {status === "running" && (
+                  <Loader2
+                    size={18}
+                    className="animate-spin"
+                    style={{ color: "var(--accent)" }}
+                  />
+                )}
+                {status === "done" && <CheckCircle size={18} style={{ color: "var(--green)" }} />}
+                {status === "error" && <XCircle size={18} style={{ color: "var(--red)" }} />}
+                <div>
+                  <h2 className="text-sm font-semibold">
+                    {status === "running" && "Scraping en cours..."}
+                    {status === "done" && "Scraping termine !"}
+                    {status === "error" && "Erreur"}
+                  </h2>
+                  <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                    {fmtTime(elapsed)} &middot; {progress.processed}/{progress.total} combos
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-4">
+                <div className="text-right">
+                  <p className="text-lg font-bold" style={{ color: "var(--green)" }}>
+                    {totalNewLeads.toLocaleString()}
+                  </p>
+                  <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+                    nouveaux leads
+                  </p>
+                </div>
+                {totalDuplicates > 0 && (
+                  <div className="text-right">
+                    <p className="text-lg font-bold" style={{ color: "var(--text-muted)" }}>
+                      {totalDuplicates.toLocaleString()}
+                    </p>
+                    <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+                      doublons
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Progress bar */}
+            <div className="px-5 py-4">
+              <div className="w-full h-2.5 rounded-full" style={{ background: "var(--bg)" }}>
+                <div
+                  className="h-2.5 rounded-full transition-all duration-500"
+                  style={{
+                    width: `${progress.percent}%`,
+                    background:
+                      status === "error" ? "var(--red)" : status === "done" ? "var(--green)" : "var(--accent)",
+                  }}
+                />
+              </div>
+              {errorMsg && (
+                <p className="text-xs mt-2" style={{ color: "var(--red)" }}>
+                  {errorMsg}
+                </p>
+              )}
+            </div>
+          </div>
+
+          {/* Combos list */}
+          {combos.length > 0 && (
+            <div
+              className="rounded-xl border border-[var(--border)]"
+              style={{ background: "var(--bg-raised)" }}
+            >
+              <div className="px-5 py-4 border-b border-[var(--border)]">
+                <h2 className="text-sm font-medium">
+                  Combos ({combos.filter((c) => c.status === "done").length}/{combos.length})
+                </h2>
+              </div>
+              <div className="divide-y divide-[var(--border)] max-h-[400px] overflow-y-auto">
+                {combos.map((c, i) => (
+                  <ComboRow key={`${c.verticaleId}-${c.ville}-${i}`} combo={c} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* CTAs */}
+          {status === "done" && (
+            <div className="flex gap-3">
+              <a
+                href="/leads"
+                className="flex-1 flex items-center justify-center gap-2 px-5 py-3 rounded-xl text-sm font-semibold text-white transition-all hover:opacity-90"
+                style={{ background: "var(--accent)" }}
+              >
+                Voir les leads <ArrowRight size={16} />
+              </a>
+              <a
+                href="/enrichment"
+                className="flex-1 flex items-center justify-center gap-2 px-5 py-3 rounded-xl text-sm font-semibold transition-all hover:opacity-90 border"
+                style={{
+                  borderColor: "var(--accent)",
+                  color: "var(--accent)",
+                  background: "var(--accent-subtle)",
+                }}
+              >
+                Enrichir les leads <ArrowRight size={16} />
+              </a>
+              <button
+                onClick={() => {
+                  setStatus("idle");
+                  setCombos([]);
+                  setProgress({ processed: 0, total: 0, percent: 0 });
+                  setTotalNewLeads(0);
+                  setTotalDuplicates(0);
+                  setErrorMsg(null);
+                }}
+                className="px-5 py-3 rounded-xl text-sm font-medium transition-all hover:opacity-90 border cursor-pointer"
+                style={{ borderColor: "var(--border)", color: "var(--text-secondary)" }}
+              >
+                Nouveau scrape
+              </button>
+            </div>
+          )}
+
+          {status === "error" && (
+            <button
+              onClick={() => {
+                setStatus("idle");
+                setCombos([]);
+                setErrorMsg(null);
+              }}
+              className="px-5 py-3 rounded-xl text-sm font-medium text-white transition-all hover:opacity-90 cursor-pointer"
+              style={{ background: "var(--red)" }}
+            >
+              Reessayer
+            </button>
+          )}
         </div>
-      </div>
+      )}
+
+      {/* History */}
+      {history.length > 0 && (
+        <div
+          className="rounded-xl border border-[var(--border)] mt-8"
+          style={{ background: "var(--bg-raised)" }}
+        >
+          <div className="px-5 py-4 border-b border-[var(--border)] flex items-center gap-2">
+            <Clock size={16} style={{ color: "var(--text-muted)" }} />
+            <h2 className="text-sm font-medium">Historique ({history.length})</h2>
+          </div>
+          <div className="divide-y divide-[var(--border)]">
+            {history.map((job) => (
+              <HistoryRow key={job.id} job={job} />
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Footer */}
       <p className="text-center text-xs mt-10" style={{ color: "var(--text-muted)" }}>
-        AVA GTM &middot; Scraping pipeline
+        AVA GTM &middot; Scraping pipeline &middot; Google Places API
       </p>
     </div>
   );
 }
 
-/* ---------- Sub-components ---------- */
+/* ================================================================== */
+/*  Sub-components                                                     */
+/* ================================================================== */
 
-function StatCard({
+function QuickBtn({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className="text-[10px] px-2 py-1 rounded-md transition-all hover:opacity-80 cursor-pointer"
+      style={{ background: "var(--bg)", color: "var(--text-muted)", border: "1px solid var(--border)" }}
+    >
+      {label}
+    </button>
+  );
+}
+
+function VertChip({
+  vert,
+  selected,
+  onClick,
+}: {
+  vert: Verticale;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-left transition-all cursor-pointer border"
+      style={{
+        background: selected ? "var(--accent-subtle)" : "var(--bg)",
+        borderColor: selected ? "var(--accent)" : "var(--border)",
+      }}
+    >
+      <span className="text-base">{vert.emoji}</span>
+      <div className="flex-1 min-w-0">
+        <p
+          className="text-sm font-medium truncate"
+          style={{ color: selected ? "var(--accent)" : "var(--text-primary)" }}
+        >
+          {vert.name}
+        </p>
+        <p className="text-[10px] truncate" style={{ color: "var(--text-muted)" }}>
+          {vert.googleMapsCategories.length} categories &middot; Tier {vert.tier}
+        </p>
+      </div>
+      <span
+        className="text-[10px] px-2 py-0.5 rounded-full font-medium"
+        style={{
+          background:
+            vert.tier === 1
+              ? "var(--green-subtle)"
+              : vert.tier === 2
+                ? "var(--amber-subtle)"
+                : "var(--bg-surface)",
+          color:
+            vert.tier === 1
+              ? "var(--green)"
+              : vert.tier === 2
+                ? "var(--amber)"
+                : "var(--text-muted)",
+        }}
+      >
+        T{vert.tier}
+      </span>
+    </button>
+  );
+}
+
+function EstCard({
   label,
   value,
   accent,
 }: {
   label: string;
   value: string;
-  accent?: "green" | "amber";
+  accent?: boolean;
 }) {
-  const colorMap = { green: "var(--green)", amber: "var(--amber)" };
   return (
-    <div
-      className="rounded-lg p-4 border border-[var(--border)]"
-      style={{ background: "var(--bg-raised)" }}
-    >
-      <p className="text-xs font-medium" style={{ color: "var(--text-muted)" }}>
+    <div className="rounded-lg p-3 border border-[var(--border)]" style={{ background: "var(--bg)" }}>
+      <p className="text-[10px] font-medium" style={{ color: "var(--text-muted)" }}>
         {label}
       </p>
       <p
-        className="text-xl font-semibold mt-1"
-        style={accent ? { color: colorMap[accent] } : undefined}
+        className="text-lg font-semibold mt-0.5"
+        style={accent ? { color: "var(--accent)" } : undefined}
       >
         {value}
       </p>
@@ -204,51 +698,102 @@ function StatCard({
   );
 }
 
-function RunRow({
-  verticale,
-  runId,
-  status,
-  queries,
-  results,
-}: {
-  verticale: string;
-  runId: string;
-  status: string;
-  queries: number;
-  results: number;
-}) {
+function ComboRow({ combo }: { combo: ComboStatus }) {
   const StatusIcon =
-    status === "SUCCEEDED"
+    combo.status === "done"
       ? CheckCircle
-      : status === "RUNNING"
+      : combo.status === "running"
+        ? Loader2
+        : combo.status === "error"
+          ? XCircle
+          : Clock;
+  const statusColor =
+    combo.status === "done"
+      ? "var(--green)"
+      : combo.status === "running"
+        ? "var(--accent)"
+        : combo.status === "error"
+          ? "var(--red)"
+          : "var(--text-muted)";
+
+  return (
+    <div className="px-5 py-2.5 flex items-center justify-between">
+      <div className="flex items-center gap-2.5">
+        <StatusIcon
+          size={14}
+          style={{ color: statusColor }}
+          className={combo.status === "running" ? "animate-spin" : ""}
+        />
+        <p className="text-sm">
+          <span className="font-medium">{combo.verticale}</span>
+          <span style={{ color: "var(--text-muted)" }}> &times; </span>
+          <span>{combo.ville}</span>
+        </p>
+      </div>
+      <div className="flex items-center gap-3 text-xs">
+        {combo.status === "done" && (
+          <>
+            <span style={{ color: "var(--green)" }} className="font-semibold">
+              +{combo.newLeads}
+            </span>
+            {combo.duplicates > 0 && (
+              <span style={{ color: "var(--text-muted)" }}>{combo.duplicates} dups</span>
+            )}
+          </>
+        )}
+        {combo.status === "error" && (
+          <span style={{ color: "var(--red)" }}>{combo.error ?? "Erreur"}</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function HistoryRow({ job }: { job: ScrapingJob }) {
+  const date = new Date(job.created_at);
+  const fmtDate = date.toLocaleDateString("fr-FR", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  const StatusIcon =
+    job.status === "completed"
+      ? CheckCircle
+      : job.status === "running"
         ? Clock
         : XCircle;
   const statusColor =
-    status === "SUCCEEDED"
+    job.status === "completed"
       ? "var(--green)"
-      : status === "RUNNING"
+      : job.status === "running"
         ? "var(--amber)"
         : "var(--red)";
 
   return (
     <div className="px-5 py-3 flex items-center justify-between">
       <div>
-        <p className="text-sm font-medium">{verticale}</p>
-        <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-          Run: {runId.substring(0, 8)}...
+        <p className="text-sm font-medium">{fmtDate}</p>
+        <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+          {(job.verticale_ids ?? []).length} verticales &middot;{" "}
+          {(job.villes ?? []).length} villes &middot;{" "}
+          {job.total_combos ?? 0} combos
         </p>
       </div>
       <div className="flex items-center gap-4">
         <div className="text-right">
-          <p className="text-sm font-semibold">{results.toLocaleString()}</p>
+          <p className="text-sm font-semibold" style={{ color: "var(--green)" }}>
+            {(job.total_new_leads ?? 0).toLocaleString()}
+          </p>
           <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-            {queries} queries
+            leads
           </p>
         </div>
         <div className="flex items-center gap-1.5">
           <StatusIcon size={14} style={{ color: statusColor }} />
           <span className="text-[11px] font-medium" style={{ color: statusColor }}>
-            {status}
+            {job.status}
           </span>
         </div>
       </div>
