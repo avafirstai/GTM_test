@@ -49,8 +49,8 @@ from bs4 import BeautifulSoup
 APIFY_TOKEN = os.environ.get("APIFY_TOKEN", "")
 
 # Supabase (from environment — NEVER hardcode credentials)
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
-SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "")
+SUPABASE_URL = os.environ.get("SUPABASE_URL", "") or os.environ.get("NEXT_PUBLIC_SUPABASE_URL", "")
+SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "") or os.environ.get("NEXT_PUBLIC_SUPABASE_ANON_KEY", "")
 
 DATASET_IDS = [
     "1R95ndihhQhYmX7Pv", "d75bTGRX0avyXyzJ8", "KVOtVsZexVIpJCvd7",
@@ -233,7 +233,11 @@ def extract_emails_from_html(html: str, base_domain: str) -> list[str]:
             continue
         if ".." in email:
             continue
-        if email.endswith((".png", ".jpg", ".svg", ".gif", ".css", ".js")):
+        if email.endswith((
+            ".png", ".jpg", ".jpeg", ".svg", ".gif", ".webp", ".bmp",
+            ".ico", ".tiff", ".css", ".js", ".woff", ".woff2", ".ttf",
+            ".eot", ".otf", ".map", ".pdf",
+        )):
             continue
         # Skip encoded/minified strings that look like emails but aren't
         if len(local) > 30 and not any(c in local for c in "._ -"):
@@ -292,37 +296,42 @@ def infer_email_domain(website: str) -> Optional[str]:
 # Web Scraping (async)
 # ---------------------------------------------------------------------------
 
-def create_ssl_context() -> ssl.SSLContext:
-    """Create an SSL context that tolerates bad certificates (many French SMB sites)."""
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-    return ctx
+# SSL context for sites that need cert-less TLS negotiation
+_SSL_CTX = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+_SSL_CTX.check_hostname = False
+_SSL_CTX.verify_mode = ssl.CERT_NONE
 
 
 async def fetch_page(
     session: aiohttp.ClientSession,
     url: str,
-    ssl_ctx: ssl.SSLContext,
 ) -> Optional[str]:
-    """Fetch a single page, return HTML or None on failure."""
-    try:
-        async with session.get(
-            url,
-            timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
-            allow_redirects=True,
-            ssl=ssl_ctx,
-        ) as resp:
-            if resp.status != 200:
-                return None
-            content_type = resp.headers.get("content-type", "")
-            if "text/html" not in content_type and "text/plain" not in content_type:
-                return None
-            html = await resp.text(errors="replace")
-            # Limit size to avoid memory issues on huge pages
-            return html[:500_000] if html else None
-    except Exception:
-        return None
+    """Fetch a single page, return HTML or None on failure.
+
+    Tries ssl=_SSL_CTX first (handles most sites including bad certs),
+    then falls back to ssl=False for edge cases. Many French SMB sites
+    have misconfigured certs (TLSV1_UNRECOGNIZED_NAME, expired, etc.).
+    """
+    for ssl_option in (_SSL_CTX, False):
+        try:
+            async with session.get(
+                url,
+                timeout=aiohttp.ClientTimeout(total=REQUEST_TIMEOUT),
+                allow_redirects=True,
+                ssl=ssl_option,
+            ) as resp:
+                if resp.status != 200:
+                    return None
+                content_type = resp.headers.get("content-type", "")
+                if "text/html" not in content_type and "text/plain" not in content_type:
+                    return None
+                html = await resp.text(errors="replace")
+                return html[:500_000] if html else None
+        except aiohttp.ClientConnectorSSLError:
+            continue  # Try next SSL option
+        except Exception:
+            return None
+    return None
 
 
 async def scrape_emails_from_site(
@@ -331,7 +340,6 @@ async def scrape_emails_from_site(
     paths: list[str],
     max_pages: int,
     semaphore: asyncio.Semaphore,
-    ssl_ctx: ssl.SSLContext,
 ) -> list[str]:
     """Scrape emails from a website by visiting key pages."""
     async with semaphore:
@@ -345,7 +353,7 @@ async def scrape_emails_from_site(
                 break
 
             url = urljoin(website, path)
-            html = await fetch_page(session, url, ssl_ctx)
+            html = await fetch_page(session, url)
             if html:
                 emails = extract_emails_from_html(html, base_domain)
                 all_emails.extend(emails)
@@ -474,7 +482,7 @@ def load_leads_from_supabase() -> list[Lead]:
     while True:
         url = (
             f"{SUPABASE_URL}/rest/v1/gtm_leads"
-            f"?select=name,phone,website,category,city,address,rating,reviews_count,place_id,email"
+            f"?select=id,name,phone,website,category,city,address,rating,reviews,email"
             f"&order=created_at.asc"
             f"&offset={offset}&limit={page_size}"
         )
@@ -498,8 +506,8 @@ def load_leads_from_supabase() -> list[Lead]:
                     city=item.get("city", ""),
                     address=item.get("address", ""),
                     rating=float(item.get("rating", 0) or 0),
-                    reviews=int(item.get("reviews_count", 0) or 0),
-                    place_id=item.get("place_id", ""),
+                    reviews=int(item.get("reviews", 0) or 0),
+                    place_id=str(item.get("id", "")),
                 )
                 existing_email = item.get("email", "")
                 if existing_email:
@@ -590,7 +598,6 @@ async def run_phase1(
         return leads
 
     semaphore = asyncio.Semaphore(MAX_CONCURRENT)
-    ssl_ctx = create_ssl_context()
 
     headers = {
         "User-Agent": (
@@ -606,7 +613,6 @@ async def run_phase1(
         limit=MAX_CONCURRENT,
         ttl_dns_cache=300,
         force_close=True,
-        ssl=ssl_ctx,
     )
 
     async with aiohttp.ClientSession(headers=headers, connector=connector) as session:
@@ -620,7 +626,7 @@ async def run_phase1(
             tasks = [
                 scrape_emails_from_site(
                     session, lead.website, CONTACT_PATHS_PHASE1,
-                    MAX_PAGES_PER_SITE_P1, semaphore, ssl_ctx,
+                    MAX_PAGES_PER_SITE_P1, semaphore,
                 )
                 for lead in batch_leads
             ]
@@ -699,7 +705,6 @@ async def run_phase2(
         return leads
 
     semaphore = asyncio.Semaphore(MAX_CONCURRENT)
-    ssl_ctx = create_ssl_context()
 
     headers = {
         "User-Agent": (
@@ -715,7 +720,6 @@ async def run_phase2(
         limit=MAX_CONCURRENT,
         ttl_dns_cache=300,
         force_close=True,
-        ssl=ssl_ctx,
     )
 
     async with aiohttp.ClientSession(headers=headers, connector=connector) as session:
@@ -732,7 +736,7 @@ async def run_phase2(
             tasks = [
                 scrape_emails_from_site(
                     session, lead.website, CONTACT_PATHS_PHASE2,
-                    MAX_PAGES_PER_SITE_P2, semaphore, ssl_ctx,
+                    MAX_PAGES_PER_SITE_P2, semaphore,
                 )
                 for lead in batch_leads
             ]

@@ -116,44 +116,79 @@ def get_or_create_campaign(verticale: str, campaign_id: str) -> str:
     return campaign_id
 
 
+BULK_BATCH_SIZE = 500  # Instantly API limit per request
+
+
+def build_lead_payload(lead: dict[str, str]) -> dict[str, object]:
+    """Build a single lead payload for the Instantly bulk API."""
+    payload: dict[str, object] = {
+        "email": lead["email"],
+        "first_name": extract_first_name(lead.get("title", "")),
+        "company_name": lead.get("title", ""),
+    }
+    if lead.get("phone"):
+        payload["phone"] = lead["phone"]
+    if lead.get("website"):
+        payload["website"] = lead["website"]
+
+    # Extra data as custom variables (for email personalization)
+    custom_vars: dict[str, str] = {}
+    if lead.get("city"):
+        custom_vars["city"] = lead["city"]
+    if lead.get("category"):
+        custom_vars["lt_category"] = lead["category"]
+    if custom_vars:
+        payload["custom_variables"] = custom_vars
+
+    return payload
+
+
 def upload_leads_batch(
     campaign_id: str,
     leads: list[dict[str, str]],
 ) -> dict[str, object]:
-    """Upload leads to Instantly campaign one by one (v2 API)."""
+    """Upload leads to Instantly via bulk API (up to 500/request)."""
     total_uploaded = 0
     total_errors = 0
+    total_skipped = 0
 
-    for idx, lead in enumerate(leads):
-        entry: dict[str, str] = {
-            "email": lead["email"],
-            "first_name": extract_first_name(lead.get("title", "")),
-            "company_name": lead.get("title", ""),
-            "campaign": campaign_id,
+    for chunk_start in range(0, len(leads), BULK_BATCH_SIZE):
+        chunk = leads[chunk_start:chunk_start + BULK_BATCH_SIZE]
+        batch_num = chunk_start // BULK_BATCH_SIZE + 1
+        total_batches = (len(leads) + BULK_BATCH_SIZE - 1) // BULK_BATCH_SIZE
+
+        payload: dict[str, object] = {
+            "campaign_id": campaign_id,
+            "skip_if_in_workspace": True,
+            "skip_if_in_campaign": True,
+            "leads": [build_lead_payload(lead) for lead in chunk],
         }
-        # Custom variables for email personalization
-        if lead.get("website"):
-            entry["website"] = lead["website"]
-        if lead.get("city"):
-            entry["city"] = lead["city"]
-        if lead.get("phone"):
-            entry["phone"] = lead["phone"]
-        if lead.get("category"):
-            entry["lt_category"] = lead["category"]
 
-        result = instantly_api_request("POST", "/leads", entry)
+        print(f"    Batch {batch_num}/{total_batches}: {len(chunk)} leads...")
+        result = instantly_api_request("POST", "/leads", payload)
 
         if isinstance(result, dict) and result.get("error"):
-            total_errors += 1
+            total_errors += len(chunk)
+            print(f"    Batch {batch_num}: FAILED")
         else:
-            total_uploaded += 1
+            batch_uploaded = result.get("leads_uploaded", len(chunk)) if isinstance(result, dict) else len(chunk)
+            batch_skipped = (
+                (result.get("already_in_campaign", 0) or 0)
+                + (result.get("duplicate_email_count", 0) or 0)
+            ) if isinstance(result, dict) else 0
+            batch_invalid = result.get("invalid_email_count", 0) if isinstance(result, dict) else 0
 
-        # Progress every 50 leads
-        if (idx + 1) % 50 == 0:
-            print(f"    Progress: {idx + 1}/{len(leads)} ({total_uploaded} ok, {total_errors} err)")
+            if isinstance(batch_uploaded, int):
+                total_uploaded += batch_uploaded
+            if isinstance(batch_skipped, int):
+                total_skipped += batch_skipped
+            if isinstance(batch_invalid, int):
+                total_errors += batch_invalid
 
-    print(f"    Done: {total_uploaded} uploaded, {total_errors} errors")
-    return {"uploaded": total_uploaded, "errors": total_errors}
+            print(f"    Batch {batch_num}: {batch_uploaded} uploaded, {batch_skipped} skipped, {batch_invalid} invalid")
+
+    print(f"    Done: {total_uploaded} uploaded, {total_skipped} skipped, {total_errors} errors")
+    return {"uploaded": total_uploaded, "errors": total_errors, "skipped": total_skipped}
 
 
 def main() -> None:
