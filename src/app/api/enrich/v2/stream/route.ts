@@ -237,6 +237,59 @@ export async function POST(request: Request) {
         const allResults: EnrichmentPipelineResult[] = [];
 
         for (let i = 0; i < enrichmentLeads.length; i += BATCH_SIZE) {
+          // Check for pause/stop signal from user
+          if (i > 0) {
+            const { data: jobCheck } = await supabase
+              .from("gtm_enrichment_jobs")
+              .select("signal")
+              .eq("id", jobId)
+              .single();
+
+            const sig = jobCheck?.signal as string | null;
+            if (sig === "pause" || sig === "stop") {
+              const finalStatus = sig === "stop" ? "stopped" : "paused";
+
+              const partialSummary = {
+                totalEmails: allResults.filter((r) => r.bestEmail).length,
+                totalPhones: allResults.filter((r) => r.bestPhone).length,
+                totalSiret: allResults.filter((r) => r.siret).length,
+                totalDirigeants: allResults.filter((r) => r.dirigeant).length,
+                avgConfidence: allResults.length > 0
+                  ? Math.round(allResults.reduce((sum, r) => sum + r.finalConfidence, 0) / allResults.length)
+                  : 0,
+                avgDurationMs: allResults.length > 0
+                  ? Math.round(allResults.reduce((sum, r) => sum + r.durationMs, 0) / allResults.length)
+                  : 0,
+              };
+
+              await supabase
+                .from("gtm_enrichment_jobs")
+                .update({
+                  status: finalStatus,
+                  signal: null,
+                  progress_processed: processedCount,
+                  progress_enriched: enrichedCount,
+                  summary: partialSummary,
+                  source_stats: sourceStats,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq("id", jobId);
+
+              send(finalStatus, {
+                reason: sig === "stop" ? "Arrete par l'utilisateur" : "Mis en pause",
+                processed: processedCount,
+                total: enrichmentLeads.length,
+                enriched: enrichedCount,
+                failed: failedCount,
+                skipped: skippedCount,
+                summary: partialSummary,
+                sourceStats,
+              });
+              controller.close();
+              return;
+            }
+          }
+
           const batch = enrichmentLeads.slice(i, i + BATCH_SIZE);
 
           // Emit lead_start for each lead in the batch

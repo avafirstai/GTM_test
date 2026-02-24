@@ -33,6 +33,9 @@ import {
   Hash,
   UserCheck,
   CircleDot,
+  Pause,
+  Square,
+  RefreshCw,
 } from "lucide-react";
 
 /* ================================================================== */
@@ -105,7 +108,7 @@ interface EnrichJob {
   completed_at: string | null;
 }
 
-type RunStatus = "idle" | "running" | "done" | "error";
+type RunStatus = "idle" | "running" | "paused" | "stopped" | "done" | "error";
 
 /* ================================================================== */
 /*  JSONB safe parsers — validate raw Supabase data before state       */
@@ -237,6 +240,25 @@ export default function EnrichmentPage() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const latestJobIdRef = useRef<string | null>(null);
 
+  // Signal state
+  const [signalSending, setSignalSending] = useState(false);
+
+  async function sendSignal(signal: "pause" | "stop") {
+    if (!jobId || signalSending) return;
+    setSignalSending(true);
+    try {
+      await fetch(`/api/jobs/${jobId}/signal`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ table: "gtm_enrichment_jobs", signal }),
+      });
+    } catch {
+      // Signal best-effort — backend checks DB on next iteration
+    } finally {
+      setSignalSending(false);
+    }
+  }
+
   /* ---------------------------------------------------------------- */
   /*  Cleanup on unmount                                               */
   /* ---------------------------------------------------------------- */
@@ -299,13 +321,44 @@ export default function EnrichmentPage() {
           // Start polling this job
           startPolling(runningJob.id);
         } else {
-          // Check last completed job for display
-          fetch("/api/enrich/jobs?status=completed&limit=1")
-            .then((r) => r.json())
-            .then((d) => {
-              if (d.success && d.jobs.length > 0) {
-                const lastJob = d.jobs[0] as EnrichJob;
-                restoreFromJob(lastJob);
+          // Check for a paused job to offer resume
+          fetch("/api/enrich/jobs?status=paused&limit=1")
+            .then((r2) => r2.json())
+            .then((d2) => {
+              if (d2.success && d2.jobs.length > 0) {
+                const pausedJob = d2.jobs[0] as EnrichJob;
+                setJobId(pausedJob.id);
+                setStatus("paused");
+                const parsedResultsForCounts = safeLeadResults(pausedJob.lead_results);
+                const failedFromResults = parsedResultsForCounts.filter((r) => r.status === "failed").length;
+                const skippedFromResults = parsedResultsForCounts.filter((r) => r.status === "skipped").length;
+                setProgress({
+                  processed: pausedJob.progress_processed ?? 0,
+                  total: pausedJob.progress_total ?? 0,
+                  enriched: pausedJob.progress_enriched ?? 0,
+                  failed: failedFromResults,
+                  skipped: skippedFromResults,
+                  percent: pausedJob.progress_total > 0
+                    ? Math.round((pausedJob.progress_processed / pausedJob.progress_total) * 100)
+                    : 0,
+                });
+                const parsedSummary = safeSummary(pausedJob.summary);
+                if (parsedSummary) setSummary(parsedSummary);
+                const parsedStats = safeSourceStats(pausedJob.source_stats);
+                if (parsedStats) setSourceStats(parsedStats);
+                const parsedResults = safeLeadResults(pausedJob.lead_results);
+                if (parsedResults.length > 0) setLeadResults(parsedResults);
+              } else {
+                // Check last completed job for display
+                fetch("/api/enrich/jobs?status=completed&limit=1")
+                  .then((r3) => r3.json())
+                  .then((d3) => {
+                    if (d3.success && d3.jobs.length > 0) {
+                      const lastJob = d3.jobs[0] as EnrichJob;
+                      restoreFromJob(lastJob);
+                    }
+                  })
+                  .catch(() => {});
               }
             })
             .catch(() => {});
@@ -387,6 +440,16 @@ export default function EnrichmentPage() {
           if (pollRef.current) clearInterval(pollRef.current);
           setStatus("error");
           setErrorMsg(job.error || "Erreur inconnue");
+          stopTimer();
+        } else if (job.status === "paused" || job.status === "stopped") {
+          if (pollRef.current) clearInterval(pollRef.current);
+          setStatus(job.status as "paused" | "stopped");
+          setCurrentLead(null);
+          latestJobIdRef.current = null;
+          const parsedSummary = safeSummary(job.summary);
+          if (parsedSummary) setSummary(parsedSummary);
+          const parsedStats = safeSourceStats(job.source_stats);
+          if (parsedStats) setSourceStats(parsedStats);
           stopTimer();
         }
       } catch {
@@ -560,6 +623,23 @@ export default function EnrichmentPage() {
                 // Backward compat for old SSE events
                 const parsed = safeLeadResult(data);
                 if (parsed) setLeadResults((prev) => [...prev, parsed]);
+              } else if (eventType === "paused" || eventType === "stopped") {
+                stopTimer();
+                setStatus(eventType as "paused" | "stopped");
+                setCurrentLead(null);
+                latestJobIdRef.current = null;
+                const parsedSummary = safeSummary(data.summary);
+                if (parsedSummary) setSummary(parsedSummary);
+                const parsedStats = safeSourceStats(data.sourceStats);
+                if (parsedStats) setSourceStats(parsedStats);
+                setProgress((prev) => ({
+                  ...prev,
+                  processed: typeof data.processed === "number" ? data.processed : prev.processed,
+                  enriched: typeof data.enriched === "number" ? data.enriched : prev.enriched,
+                  failed: typeof data.failed === "number" ? data.failed : prev.failed,
+                  skipped: typeof data.skipped === "number" ? data.skipped : prev.skipped,
+                  percent: typeof data.percent === "number" ? data.percent : prev.percent,
+                }));
               } else if (eventType === "done") {
                 stopTimer();
                 setStatus("done");
@@ -928,12 +1008,32 @@ export default function EnrichmentPage() {
           className="rounded-xl border border-[var(--border)] mb-6 p-5"
           style={{ background: "var(--bg-raised)" }}
         >
-          <div className="flex items-center gap-3 mb-3">
-            <Loader2 size={16} className="animate-spin" style={{ color: "var(--accent)" }} />
-            <span className="text-sm font-medium">Enrichissement en cours...</span>
-            <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-              {target}
-            </span>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-3">
+              <Loader2 size={16} className="animate-spin" style={{ color: "var(--accent)" }} />
+              <span className="text-sm font-medium">Enrichissement en cours...</span>
+              <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+                {target}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => sendSignal("pause")}
+                disabled={signalSending}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all hover:opacity-90 cursor-pointer disabled:opacity-50"
+                style={{ background: "var(--amber-subtle)", color: "var(--amber)", border: "1px solid rgba(245,158,11,0.3)" }}
+              >
+                <Pause size={12} /> Pause
+              </button>
+              <button
+                onClick={() => sendSignal("stop")}
+                disabled={signalSending}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all hover:opacity-90 cursor-pointer disabled:opacity-50"
+                style={{ background: "var(--red-subtle)", color: "var(--red)", border: "1px solid rgba(239,68,68,0.3)" }}
+              >
+                <Square size={12} /> Arreter
+              </button>
+            </div>
           </div>
 
           {/* Current lead being processed */}
@@ -1005,6 +1105,104 @@ export default function EnrichmentPage() {
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Paused Banner */}
+      {status === "paused" && (
+        <div
+          className="rounded-xl mb-6 px-5 py-4"
+          style={{ background: "rgba(245,158,11,0.06)", border: "1px solid rgba(245,158,11,0.25)" }}
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Pause size={16} style={{ color: "#f59e0b" }} />
+              <div>
+                <span className="text-sm font-medium" style={{ color: "#f59e0b" }}>
+                  Enrichissement en pause
+                </span>
+                <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>
+                  {progress.processed}/{progress.total} traites &middot; {progress.enriched} enrichis
+                  {progress.failed > 0 && ` \u00b7 ${progress.failed} echoues`}
+                  {progress.skipped > 0 && ` \u00b7 ${progress.skipped} skipped`}
+                  &middot; {(elapsedMs / 1000).toFixed(1)}s ecoules
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={runEnrichAll}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium transition-all hover:opacity-90"
+                style={{ background: "#f59e0b", color: "white" }}
+              >
+                <RefreshCw size={12} /> Reprendre
+              </button>
+              <a
+                href="/leads?hasEmail=yes"
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors"
+                style={{ background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}
+              >
+                <ExternalLink size={11} /> Voir les leads
+              </a>
+            </div>
+          </div>
+          {/* Show partial progress bar */}
+          <div className="mt-3 h-1.5 rounded-full overflow-hidden" style={{ background: "var(--bg)" }}>
+            <div
+              className="h-full rounded-full"
+              style={{ background: "#f59e0b", width: `${Math.max(progress.percent, 2)}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Stopped Banner */}
+      {status === "stopped" && (
+        <div
+          className="rounded-xl mb-6 px-5 py-4"
+          style={{ background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.25)" }}
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Square size={16} style={{ color: "#ef4444" }} />
+              <div>
+                <span className="text-sm font-medium" style={{ color: "#ef4444" }}>
+                  Enrichissement arrete
+                </span>
+                <p className="text-xs mt-0.5" style={{ color: "var(--text-muted)" }}>
+                  {progress.processed}/{progress.total} traites &middot; {progress.enriched} enrichis
+                  {progress.failed > 0 && ` \u00b7 ${progress.failed} echoues`}
+                  {progress.skipped > 0 && ` \u00b7 ${progress.skipped} skipped`}
+                  &middot; Arrete par l&apos;utilisateur
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              {progress.enriched > 0 && (
+                <a
+                  href="/leads?hasEmail=yes"
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors"
+                  style={{ background: "var(--green-subtle)", color: "var(--green)", border: "1px solid rgba(34,197,94,0.2)" }}
+                >
+                  <ExternalLink size={11} /> Voir les {progress.enriched} leads enrichis
+                </a>
+              )}
+              <button
+                onClick={() => { setStatus("idle"); setLeadResults([]); setSummary(null); setSourceStats(null); setProgress({ processed: 0, total: 0, enriched: 0, failed: 0, skipped: 0, percent: 0 }); }}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors"
+                style={{ background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}
+              >
+                <RefreshCw size={11} /> Nouveau enrichissement
+              </button>
+            </div>
+          </div>
+          {/* Progress bar showing where we stopped */}
+          <div className="mt-3 h-1.5 rounded-full overflow-hidden" style={{ background: "var(--bg)" }}>
+            <div
+              className="h-full rounded-full"
+              style={{ background: "#ef4444", width: `${Math.max(progress.percent, 2)}%` }}
+            />
+          </div>
         </div>
       )}
 

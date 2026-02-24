@@ -6,7 +6,7 @@ export const revalidate = 0;
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const limit = Math.min(Number(searchParams.get("limit") || "500"), 1000);
+  const limit = Math.min(Number(searchParams.get("limit") || "2000"), 5000);
   const offset = Number(searchParams.get("offset") || "0");
   const sortBy = searchParams.get("sortBy") || "score";
   const sortDir = searchParams.get("sortDir") || "desc";

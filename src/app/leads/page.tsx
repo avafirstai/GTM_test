@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import { LeadsTable } from "@/components/LeadsTable";
 import { fetchLeads } from "@/lib/leads-data";
@@ -24,6 +24,8 @@ export default function LeadsPage() {
   const [total, setTotal] = useState(0);
   const [stats, setStats] = useState<StatsData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadedCount, setLoadedCount] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
   const { data: campaignData } = useCampaigns();
 
   // Parse URL params into initial filters
@@ -35,31 +37,61 @@ export default function LeadsPage() {
   if (verticaleParams.length > 0) initialFilters.verticale = verticaleParams;
   if (hasEmailParam === "yes" || hasEmailParam === "no") initialFilters.hasEmail = hasEmailParam;
 
-  useEffect(() => {
-    async function load() {
-      try {
-        const [leadsRes, statsRes] = await Promise.all([
-          fetchLeads({
-            limit: 500,
-            sortBy: "score",
-            sortDir: "desc",
-            ...(villeParams.length > 0 ? { city: villeParams } : {}),
-            ...(verticaleParams.length > 0 ? { category: verticaleParams } : {}),
-            ...(hasEmailParam === "yes" || hasEmailParam === "no" ? { hasEmail: hasEmailParam } : {}),
-          }),
-          fetch("/api/stats").then((r) => r.json()),
-        ]);
+  // Stable reference for URL params used in fetch
+  const paramsKey = searchParams.toString();
+
+  const loadLeads = useCallback(async (offset = 0, append = false) => {
+    if (!append) setLoading(true);
+    else setLoadingMore(true);
+
+    try {
+      const BATCH = 2000;
+      const [leadsRes, statsRes] = await Promise.all([
+        fetchLeads({
+          limit: BATCH,
+          offset,
+          sortBy: "score",
+          sortDir: "desc",
+          ...(villeParams.length > 0 ? { city: villeParams } : {}),
+          ...(verticaleParams.length > 0 ? { category: verticaleParams } : {}),
+          ...(hasEmailParam === "yes" || hasEmailParam === "no" ? { hasEmail: hasEmailParam } : {}),
+        }),
+        // Only fetch stats on initial load, not on "load more"
+        ...(append ? [] : [fetch("/api/stats").then((r) => r.json())]),
+      ]);
+
+      if (append) {
+        setLeads((prev) => [...prev, ...leadsRes.leads]);
+        setLoadedCount((prev) => prev + leadsRes.leads.length);
+      } else {
         setLeads(leadsRes.leads);
         setTotal(leadsRes.total);
-        setStats(statsRes.stats);
-      } catch (err) {
-        console.error("Failed to load leads:", err);
-      } finally {
-        setLoading(false);
+        setLoadedCount(leadsRes.leads.length);
+        if (statsRes) setStats(statsRes.stats);
       }
+      if (!append) setTotal(leadsRes.total);
+    } catch (err) {
+      console.error("Failed to load leads:", err);
+    } finally {
+      setLoading(false);
+      setLoadingMore(false);
     }
-    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paramsKey]);
+
+  // Re-fetch EVERY TIME the page is visited or params change
+  // Using Date.now() as a cache-buster ensures fresh data on each navigation
+  const [visitKey, setVisitKey] = useState(() => Date.now());
+  useEffect(() => {
+    // On each mount/focus, bump the visit key to force re-fetch
+    const handleFocus = () => setVisitKey(Date.now());
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
   }, []);
+
+  useEffect(() => {
+    loadLeads(0, false);
+  }, [loadLeads, visitKey]);
 
   if (loading) {
     return (
@@ -116,10 +148,21 @@ export default function LeadsPage() {
       {/* Table */}
       <LeadsTable leads={leads} initialFilters={initialFilters} campaignId={campaignData?.activeCampaignId ?? undefined} />
 
-      {/* Info */}
-      <p className="text-center text-xs mt-6" style={{ color: "var(--text-muted)" }}>
-        Top {leads.length} leads par score (sur {total.toLocaleString()} au total)
-      </p>
+      {/* Load more / Info */}
+      <div className="text-center mt-6 space-y-2">
+        {loadedCount < total && (
+          <button
+            onClick={() => loadLeads(loadedCount, true)}
+            disabled={loadingMore}
+            className="px-4 py-2 text-sm font-medium rounded-lg border border-[var(--border)] hover:bg-[var(--bg-raised)] transition-colors disabled:opacity-50"
+          >
+            {loadingMore ? "Chargement..." : `Charger plus (${(total - loadedCount).toLocaleString()} restants)`}
+          </button>
+        )}
+        <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+          {leads.length.toLocaleString()} leads affichees sur {total.toLocaleString()} au total
+        </p>
+      </div>
     </div>
   );
 }

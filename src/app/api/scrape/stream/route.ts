@@ -171,6 +171,41 @@ export async function POST(request: Request) {
         }
 
         for (let i = 0; i < combos.length; i++) {
+          // Check for pause/stop signal from user
+          if (i > 0) {
+            const { data: jobCheck } = await supabase
+              .from("gtm_scraping_jobs")
+              .select("signal")
+              .eq("id", jobId)
+              .single();
+
+            const sig = jobCheck?.signal as string | null;
+            if (sig === "pause" || sig === "stop") {
+              const finalStatus = sig === "stop" ? "stopped" : "paused";
+              await supabase
+                .from("gtm_scraping_jobs")
+                .update({
+                  status: finalStatus,
+                  signal: null,
+                  processed_combos: processedCombos,
+                  total_new_leads: totalNewLeads,
+                  total_duplicates: totalDuplicates,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq("id", jobId);
+
+              send(finalStatus, {
+                reason: sig === "stop" ? "Arrete par l'utilisateur" : "Mis en pause",
+                processedCombos,
+                totalCombos: combos.length,
+                totalNewLeads,
+                totalDuplicates,
+              });
+              controller.close();
+              return;
+            }
+          }
+
           const combo = combos[i];
 
           send("combo_start", {

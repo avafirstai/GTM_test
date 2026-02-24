@@ -15,13 +15,16 @@ import {
   Zap,
   Globe,
   Plus,
+  Pause,
+  Square,
+  RefreshCw,
 } from "lucide-react";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
 /* ------------------------------------------------------------------ */
 
-type Status = "idle" | "running" | "done" | "error";
+type Status = "idle" | "running" | "paused" | "stopped" | "done" | "error";
 
 interface ComboStatus {
   verticale: string;
@@ -103,6 +106,25 @@ export default function ScrapingPage() {
       timerRef.current = null;
     }
   }, []);
+
+  // Signal state (disable button while sending)
+  const [signalSending, setSignalSending] = useState(false);
+
+  async function sendSignal(signal: "pause" | "stop") {
+    if (!jobId || signalSending) return;
+    setSignalSending(true);
+    try {
+      await fetch(`/api/jobs/${jobId}/signal`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ table: "gtm_scraping_jobs", signal }),
+      });
+    } catch {
+      // Signal best-effort — backend checks DB on next iteration
+    } finally {
+      setSignalSending(false);
+    }
+  }
 
   // Fetch history on mount
   useEffect(() => {
@@ -301,6 +323,32 @@ export default function ScrapingPage() {
             });
             if (typeof data.totalNewLeads === "number") setTotalNewLeads(data.totalNewLeads);
             if (typeof data.totalDuplicates === "number") setTotalDuplicates(data.totalDuplicates);
+          } else if (eventType === "paused") {
+            stopTimer();
+            setStatus("paused");
+            if (typeof data.totalNewLeads === "number") setTotalNewLeads(data.totalNewLeads);
+            if (typeof data.totalDuplicates === "number") setTotalDuplicates(data.totalDuplicates);
+            if (typeof data.processedCombos === "number" && typeof data.totalCombos === "number") {
+              setProgress((prev) => ({
+                ...prev,
+                processed: data.processedCombos as number,
+                total: data.totalCombos as number,
+                percent: Math.round(((data.processedCombos as number) / (data.totalCombos as number)) * 100),
+              }));
+            }
+          } else if (eventType === "stopped") {
+            stopTimer();
+            setStatus("stopped");
+            if (typeof data.totalNewLeads === "number") setTotalNewLeads(data.totalNewLeads);
+            if (typeof data.totalDuplicates === "number") setTotalDuplicates(data.totalDuplicates);
+            if (typeof data.processedCombos === "number" && typeof data.totalCombos === "number") {
+              setProgress((prev) => ({
+                ...prev,
+                processed: data.processedCombos as number,
+                total: data.totalCombos as number,
+                percent: Math.round(((data.processedCombos as number) / (data.totalCombos as number)) * 100),
+              }));
+            }
           } else if (eventType === "done") {
             stopTimer();
             setStatus("done");
@@ -617,11 +665,15 @@ export default function ScrapingPage() {
                     style={{ color: "var(--accent)" }}
                   />
                 )}
+                {status === "paused" && <Pause size={18} style={{ color: "var(--amber)" }} />}
+                {status === "stopped" && <Square size={18} style={{ color: "var(--red)" }} />}
                 {status === "done" && <CheckCircle size={18} style={{ color: "var(--green)" }} />}
                 {status === "error" && <XCircle size={18} style={{ color: "var(--red)" }} />}
                 <div>
                   <h2 className="text-sm font-semibold">
                     {status === "running" && "Scraping en cours..."}
+                    {status === "paused" && "Scraping en pause"}
+                    {status === "stopped" && "Scraping arrete"}
                     {status === "done" && "Scraping termine !"}
                     {status === "error" && "Erreur"}
                   </h2>
@@ -630,6 +682,28 @@ export default function ScrapingPage() {
                   </p>
                 </div>
               </div>
+
+              {/* Pause / Stop buttons */}
+              {status === "running" && (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => sendSignal("pause")}
+                    disabled={signalSending}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all hover:opacity-90 cursor-pointer disabled:opacity-50"
+                    style={{ background: "var(--amber-subtle)", color: "var(--amber)", border: "1px solid rgba(245,158,11,0.3)" }}
+                  >
+                    <Pause size={12} /> Pause
+                  </button>
+                  <button
+                    onClick={() => sendSignal("stop")}
+                    disabled={signalSending}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all hover:opacity-90 cursor-pointer disabled:opacity-50"
+                    style={{ background: "var(--red-subtle)", color: "var(--red)", border: "1px solid rgba(239,68,68,0.3)" }}
+                  >
+                    <Square size={12} /> Arreter
+                  </button>
+                </div>
+              )}
               <div className="flex items-center gap-4">
                 <div className="text-right">
                   <p className="text-lg font-bold" style={{ color: "var(--green)" }}>
@@ -660,7 +734,13 @@ export default function ScrapingPage() {
                   style={{
                     width: `${progress.percent}%`,
                     background:
-                      status === "error" ? "var(--red)" : status === "done" ? "var(--green)" : "var(--accent)",
+                      status === "error" || status === "stopped"
+                        ? "var(--red)"
+                        : status === "done"
+                          ? "var(--green)"
+                          : status === "paused"
+                            ? "var(--amber)"
+                            : "var(--accent)",
                   }}
                 />
               </div>
@@ -711,6 +791,69 @@ export default function ScrapingPage() {
                 }}
               >
                 Enrichir les leads <ArrowRight size={16} />
+              </a>
+              <button
+                onClick={() => {
+                  setStatus("idle");
+                  setCombos([]);
+                  setProgress({ processed: 0, total: 0, percent: 0 });
+                  setTotalNewLeads(0);
+                  setTotalDuplicates(0);
+                  setErrorMsg(null);
+                }}
+                className="px-5 py-3 rounded-xl text-sm font-medium transition-all hover:opacity-90 border cursor-pointer"
+                style={{ borderColor: "var(--border)", color: "var(--text-secondary)" }}
+              >
+                Nouveau scrape
+              </button>
+            </div>
+          )}
+
+          {/* Paused CTAs */}
+          {status === "paused" && (
+            <div
+              className="rounded-xl px-5 py-4 flex items-center justify-between"
+              style={{ background: "var(--amber-subtle)", border: "1px solid rgba(245,158,11,0.3)" }}
+            >
+              <div className="flex items-center gap-3">
+                <Pause size={16} style={{ color: "var(--amber)" }} />
+                <div>
+                  <p className="text-sm font-semibold" style={{ color: "var(--amber)" }}>
+                    Scraping en pause
+                  </p>
+                  <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+                    {totalNewLeads} leads sauvegardes. Les doublons seront automatiquement ignores a la reprise.
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={runScraping}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-semibold text-white transition-all hover:opacity-90 cursor-pointer"
+                  style={{ background: "var(--accent)" }}
+                >
+                  <RefreshCw size={14} /> Reprendre
+                </button>
+                <a
+                  href={buildLeadsUrl(Array.from(selectedVerts), Array.from(selectedVilles))}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all hover:opacity-90"
+                  style={{ borderColor: "var(--border)", color: "var(--text-secondary)", border: "1px solid var(--border)" }}
+                >
+                  Voir les leads <ArrowRight size={14} />
+                </a>
+              </div>
+            </div>
+          )}
+
+          {/* Stopped CTAs */}
+          {status === "stopped" && (
+            <div className="flex gap-3">
+              <a
+                href={buildLeadsUrl(Array.from(selectedVerts), Array.from(selectedVilles))}
+                className="flex-1 flex items-center justify-center gap-2 px-5 py-3 rounded-xl text-sm font-semibold text-white transition-all hover:opacity-90"
+                style={{ background: "var(--accent)" }}
+              >
+                Voir les {totalNewLeads} leads <ArrowRight size={16} />
               </a>
               <button
                 onClick={() => {
