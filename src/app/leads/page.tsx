@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { LeadsTable } from "@/components/LeadsTable";
 import { fetchLeads } from "@/lib/leads-data";
-import type { Lead } from "@/lib/leads-data";
+import type { Lead, LeadFilters } from "@/lib/leads-data";
 import { Users, Mail, Phone, Globe, Star } from "lucide-react";
 
 interface StatsData {
@@ -17,10 +18,20 @@ interface StatsData {
 }
 
 export default function LeadsPage() {
+  const searchParams = useSearchParams();
   const [leads, setLeads] = useState<Lead[]>([]);
   const [total, setTotal] = useState(0);
   const [stats, setStats] = useState<StatsData | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // Parse URL params into initial filters
+  const initialFilters: Partial<LeadFilters> = {};
+  const villeParams = searchParams.getAll("ville");
+  const verticaleParams = searchParams.getAll("verticale");
+  const hasEmailParam = searchParams.get("hasEmail");
+  if (villeParams.length > 0) initialFilters.ville = villeParams;
+  if (verticaleParams.length > 0) initialFilters.verticale = verticaleParams;
+  if (hasEmailParam === "yes" || hasEmailParam === "no") initialFilters.hasEmail = hasEmailParam;
 
   useEffect(() => {
     async function load() {
@@ -94,7 +105,7 @@ export default function LeadsPage() {
       </div>
 
       {/* Table */}
-      <LeadsTable leads={leads} />
+      <LeadsTable leads={leads} initialFilters={initialFilters} />
 
       {/* Info */}
       <p className="text-center text-xs mt-6" style={{ color: "var(--text-muted)" }}>

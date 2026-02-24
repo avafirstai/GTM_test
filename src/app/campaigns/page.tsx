@@ -7,10 +7,11 @@ import {
   Mail,
   TrendingUp,
   Send,
-  Eye,
-  MessageSquare,
-  AlertTriangle,
   ChevronRight,
+  Settings,
+  Rocket,
+  Link2,
+  Zap,
 } from "lucide-react";
 
 export default function CampaignsPage() {
@@ -53,26 +54,61 @@ export default function CampaignsPage() {
               color: connected ? "var(--green)" : "var(--amber)",
             }}
           >
-            {connected ? "Instantly connecte" : "Non connecte"}
+            {connected ? "Connecte" : "Non connecte"}
           </span>
         </div>
         <p className="text-sm mt-1" style={{ color: "var(--text-muted)" }}>
-          {stats
-            ? `${stats.totalLeads.toLocaleString()} leads \u00B7 ${stats.withEmail.toLocaleString()} avec email \u00B7 ${allCampaigns.length} campagne${allCampaigns.length !== 1 ? "s" : ""}`
-            : "Chargement..."}
+          Suivez vos campagnes email Instantly — envois, ouvertures, reponses.
         </p>
       </div>
 
-      {/* Not connected warning */}
+      {/* Onboarding card when not connected */}
       {!connected && (
         <div
-          className="rounded-xl p-4 mb-6 flex items-center gap-3"
-          style={{ background: "var(--amber-subtle)", border: "1px solid rgba(245,158,11,0.15)" }}
+          className="rounded-xl p-6 mb-6 border border-[var(--border)]"
+          style={{ background: "var(--bg-raised)" }}
         >
-          <AlertTriangle size={18} style={{ color: "var(--amber)" }} />
-          <p className="text-sm" style={{ color: "var(--amber)" }}>
-            Service email non connecte. Lancez une campagne depuis la page Lancer.
+          <h2 className="text-sm font-semibold mb-4">Connectez Instantly pour lancer vos campagnes</h2>
+          <div className="space-y-3">
+            <OnboardingStep
+              step={1}
+              icon={<Link2 size={14} />}
+              text="Creez un compte sur instantly.ai"
+            />
+            <OnboardingStep
+              step={2}
+              icon={<Settings size={14} />}
+              text="Ajoutez votre cle API dans Reglages"
+              href="/settings"
+            />
+            <OnboardingStep
+              step={3}
+              icon={<Rocket size={14} />}
+              text="Revenez ici pour suivre vos campagnes"
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Empty state when connected but 0 campaigns */}
+      {connected && allCampaigns.length === 0 && (
+        <div
+          className="rounded-xl p-8 mb-6 border border-[var(--border)] text-center"
+          style={{ background: "var(--bg-raised)" }}
+        >
+          <Zap size={24} className="mx-auto mb-3" style={{ color: "var(--text-muted)" }} />
+          <p className="text-sm font-medium mb-1">Aucune campagne</p>
+          <p className="text-xs mb-4" style={{ color: "var(--text-muted)" }}>
+            Lancez votre premiere campagne pour commencer a envoyer des emails.
           </p>
+          <a
+            href="/launch"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+            style={{ background: "var(--accent)", color: "white" }}
+          >
+            <Rocket size={14} />
+            Lancer une campagne
+          </a>
         </div>
       )}
 
@@ -398,6 +434,40 @@ function StatusDot({ status }: { status: string }) {
       style={{ background: color }}
     />
   );
+}
+
+function OnboardingStep({
+  step,
+  icon,
+  text,
+  href,
+}: {
+  step: number;
+  icon: React.ReactNode;
+  text: string;
+  href?: string;
+}) {
+  const content = (
+    <div
+      className="flex items-center gap-3 p-3 rounded-lg"
+      style={{ background: "var(--bg)" }}
+    >
+      <div
+        className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0"
+        style={{ background: "var(--accent-subtle)", color: "var(--accent-hover)" }}
+      >
+        {step}
+      </div>
+      <span style={{ color: "var(--text-muted)" }}>{icon}</span>
+      <p className="text-sm flex-1">{text}</p>
+      {href && <ChevronRight size={14} style={{ color: "var(--text-muted)" }} />}
+    </div>
+  );
+
+  if (href) {
+    return <a href={href} className="block">{content}</a>;
+  }
+  return content;
 }
 
 function SequenceStep({

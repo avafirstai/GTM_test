@@ -1,21 +1,128 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
+import { ChevronDown, X } from "lucide-react";
 import type { Lead, SortField, SortDirection, LeadFilters } from "@/lib/leads-data";
 
 interface LeadsTableProps {
   leads: Lead[];
+  initialFilters?: Partial<LeadFilters>;
 }
 
 const PIPELINE_COLORS: Record<string, { bg: string; text: string; label: string }> = {
   nouveau: { bg: "rgba(99,102,241,0.15)", text: "#818cf8", label: "Nouveau" },
-  contacte: { bg: "rgba(245,158,11,0.15)", text: "#f59e0b", label: "Contacté" },
-  repondu: { bg: "rgba(34,197,94,0.15)", text: "#22c55e", label: "Répondu" },
-  rdv_booke: { bg: "rgba(6,182,212,0.15)", text: "#06b6d4", label: "RDV Booké" },
+  contacte: { bg: "rgba(245,158,11,0.15)", text: "#f59e0b", label: "Contact\u00e9" },
+  repondu: { bg: "rgba(34,197,94,0.15)", text: "#22c55e", label: "R\u00e9pondu" },
+  rdv_booke: { bg: "rgba(6,182,212,0.15)", text: "#06b6d4", label: "RDV Book\u00e9" },
   deal_won: { bg: "rgba(16,185,129,0.15)", text: "#10b981", label: "Deal Won" },
   perdu: { bg: "rgba(239,68,68,0.15)", text: "#ef4444", label: "Perdu" },
 };
 
+/* ========== MultiSelectFilter ========== */
+function MultiSelectFilter({
+  label,
+  options,
+  selected,
+  onChange,
+}: {
+  label: string;
+  options: string[];
+  selected: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  const toggle = (val: string) => {
+    if (selected.includes(val)) {
+      onChange(selected.filter((s) => s !== val));
+    } else {
+      onChange([...selected, val]);
+    }
+  };
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm whitespace-nowrap"
+        style={{
+          background: selected.length > 0 ? "var(--accent-subtle)" : "var(--bg)",
+          border: selected.length > 0 ? "1px solid rgba(99,102,241,0.3)" : "1px solid var(--border)",
+          color: selected.length > 0 ? "var(--accent-hover)" : "var(--text-primary)",
+        }}
+      >
+        {label}
+        {selected.length > 0 && (
+          <span
+            className="text-[10px] font-bold w-4 h-4 flex items-center justify-center rounded-full"
+            style={{ background: "var(--accent)", color: "white" }}
+          >
+            {selected.length}
+          </span>
+        )}
+        <ChevronDown size={12} />
+      </button>
+      {open && (
+        <div
+          className="absolute z-50 mt-1 min-w-52 max-h-64 overflow-y-auto rounded-lg py-1 shadow-lg"
+          style={{
+            background: "var(--bg-surface)",
+            border: "1px solid var(--border-strong)",
+          }}
+        >
+          {selected.length > 0 && (
+            <button
+              type="button"
+              onClick={() => onChange([])}
+              className="w-full text-left px-3 py-1.5 text-xs"
+              style={{ color: "var(--red)" }}
+            >
+              Tout effacer
+            </button>
+          )}
+          {options.map((opt) => {
+            const isSelected = selected.includes(opt);
+            return (
+              <label
+                key={opt}
+                className="flex items-center gap-2 px-3 py-1.5 cursor-pointer text-sm hover:bg-[var(--bg-hover)] transition-colors"
+              >
+                <input
+                  type="checkbox"
+                  checked={isSelected}
+                  onChange={() => toggle(opt)}
+                  className="rounded accent-[var(--accent)]"
+                />
+                <span style={{ color: isSelected ? "var(--text-primary)" : "var(--text-secondary)" }}>
+                  {opt || "(vide)"}
+                </span>
+              </label>
+            );
+          })}
+          {options.length === 0 && (
+            <p className="px-3 py-2 text-xs" style={{ color: "var(--text-muted)" }}>
+              Aucune option
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ========== ScoreBadge ========== */
 function ScoreBadge({ score }: { score: number }) {
   const color =
     score >= 90 ? "#22c55e" : score >= 80 ? "#f59e0b" : score >= 60 ? "#818cf8" : "#737373";
@@ -37,6 +144,7 @@ function ScoreBadge({ score }: { score: number }) {
   );
 }
 
+/* ========== PipelineBadge ========== */
 function PipelineBadge({ status }: { status: string }) {
   const config = PIPELINE_COLORS[status] || PIPELINE_COLORS.nouveau;
   return (
@@ -49,16 +157,18 @@ function PipelineBadge({ status }: { status: string }) {
   );
 }
 
-export function LeadsTable({ leads }: LeadsTableProps) {
+/* ========== LeadsTable ========== */
+export function LeadsTable({ leads, initialFilters }: LeadsTableProps) {
   const [filters, setFilters] = useState<LeadFilters>({
     search: "",
-    ville: "",
-    verticale: "",
+    ville: [],
+    verticale: [],
     pipeline: "",
     scoreMin: 0,
     scoreMax: 100,
     hasEmail: "all",
     source: "",
+    ...initialFilters,
   });
   const [sortField, setSortField] = useState<SortField>("score");
   const [sortDir, setSortDir] = useState<SortDirection>("desc");
@@ -66,8 +176,8 @@ export function LeadsTable({ leads }: LeadsTableProps) {
   const [expandedLead, setExpandedLead] = useState<string | null>(null);
 
   // Derive unique filter options
-  const villes = useMemo(() => [...new Set(leads.map((l) => l.ville))].sort(), [leads]);
-  const verticales = useMemo(() => [...new Set(leads.map((l) => l.verticale))].sort(), [leads]);
+  const villes = useMemo(() => [...new Set(leads.map((l) => l.ville).filter(Boolean))].sort(), [leads]);
+  const verticales = useMemo(() => [...new Set(leads.map((l) => l.verticale).filter(Boolean))].sort(), [leads]);
 
   // Filter + sort
   const filteredLeads = useMemo(() => {
@@ -83,8 +193,8 @@ export function LeadsTable({ leads }: LeadsTableProps) {
           l.type_etablissement.toLowerCase().includes(q)
       );
     }
-    if (filters.ville) result = result.filter((l) => l.ville === filters.ville);
-    if (filters.verticale) result = result.filter((l) => l.verticale === filters.verticale);
+    if (filters.ville.length > 0) result = result.filter((l) => filters.ville.includes(l.ville));
+    if (filters.verticale.length > 0) result = result.filter((l) => filters.verticale.includes(l.verticale));
     if (filters.pipeline) result = result.filter((l) => l.statut_pipeline === filters.pipeline);
     if (filters.hasEmail === "yes") result = result.filter((l) => l.email);
     if (filters.hasEmail === "no") result = result.filter((l) => !l.email);
@@ -134,10 +244,13 @@ export function LeadsTable({ leads }: LeadsTableProps) {
     return <span>{sortDir === "asc" ? "\u25B2" : "\u25BC"}</span>;
   };
 
+  // Active filter tags
+  const hasActiveFilters = filters.ville.length > 0 || filters.verticale.length > 0;
+
   return (
     <div>
       {/* Filters Row */}
-      <div className="flex flex-wrap gap-3 mb-4">
+      <div className="flex flex-wrap gap-3 mb-3">
         <input
           type="text"
           placeholder="Rechercher entreprise, email, ville..."
@@ -150,36 +263,18 @@ export function LeadsTable({ leads }: LeadsTableProps) {
             color: "var(--text-primary)",
           }}
         />
-        <select
-          value={filters.ville}
-          onChange={(e) => setFilters({ ...filters, ville: e.target.value })}
-          className="px-3 py-2 rounded-lg text-sm"
-          style={{
-            background: "var(--bg)",
-            border: "1px solid var(--border)",
-            color: "var(--text-primary)",
-          }}
-        >
-          <option value="">Toutes les villes</option>
-          {villes.map((v) => (
-            <option key={v} value={v}>{v}</option>
-          ))}
-        </select>
-        <select
-          value={filters.verticale}
-          onChange={(e) => setFilters({ ...filters, verticale: e.target.value })}
-          className="px-3 py-2 rounded-lg text-sm"
-          style={{
-            background: "var(--bg)",
-            border: "1px solid var(--border)",
-            color: "var(--text-primary)",
-          }}
-        >
-          <option value="">Toutes les verticales</option>
-          {verticales.map((v) => (
-            <option key={v} value={v}>{v}</option>
-          ))}
-        </select>
+        <MultiSelectFilter
+          label="Villes"
+          options={villes}
+          selected={filters.ville}
+          onChange={(next) => setFilters({ ...filters, ville: next })}
+        />
+        <MultiSelectFilter
+          label="Verticales"
+          options={verticales}
+          selected={filters.verticale}
+          onChange={(next) => setFilters({ ...filters, verticale: next })}
+        />
         <select
           value={filters.pipeline}
           onChange={(e) => setFilters({ ...filters, pipeline: e.target.value })}
@@ -192,9 +287,9 @@ export function LeadsTable({ leads }: LeadsTableProps) {
         >
           <option value="">Tout le pipeline</option>
           <option value="nouveau">Nouveau</option>
-          <option value="contacte">Contacté</option>
-          <option value="repondu">Répondu</option>
-          <option value="rdv_booke">RDV Booké</option>
+          <option value="contacte">Contact\u00e9</option>
+          <option value="repondu">R\u00e9pondu</option>
+          <option value="rdv_booke">RDV Book\u00e9</option>
           <option value="deal_won">Deal Won</option>
           <option value="perdu">Perdu</option>
         </select>
@@ -216,6 +311,52 @@ export function LeadsTable({ leads }: LeadsTableProps) {
         </select>
       </div>
 
+      {/* Active filter tags */}
+      {hasActiveFilters && (
+        <div className="flex flex-wrap gap-1.5 mb-3">
+          {filters.ville.map((v) => (
+            <span
+              key={`v-${v}`}
+              className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full"
+              style={{ background: "var(--accent-subtle)", color: "var(--accent-hover)" }}
+            >
+              {v}
+              <button
+                type="button"
+                onClick={() => setFilters({ ...filters, ville: filters.ville.filter((x) => x !== v) })}
+                className="hover:opacity-70"
+              >
+                <X size={10} />
+              </button>
+            </span>
+          ))}
+          {filters.verticale.map((v) => (
+            <span
+              key={`c-${v}`}
+              className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-full"
+              style={{ background: "var(--green-subtle)", color: "var(--green)" }}
+            >
+              {v}
+              <button
+                type="button"
+                onClick={() => setFilters({ ...filters, verticale: filters.verticale.filter((x) => x !== v) })}
+                className="hover:opacity-70"
+              >
+                <X size={10} />
+              </button>
+            </span>
+          ))}
+          <button
+            type="button"
+            onClick={() => setFilters({ ...filters, ville: [], verticale: [] })}
+            className="text-xs px-2 py-1"
+            style={{ color: "var(--text-muted)" }}
+          >
+            Tout effacer
+          </button>
+        </div>
+      )}
+
       {/* Selection bar */}
       {selectedLeads.size > 0 && (
         <div
@@ -223,7 +364,7 @@ export function LeadsTable({ leads }: LeadsTableProps) {
           style={{ background: "var(--accent-subtle)", border: "1px solid rgba(99,102,241,0.3)" }}
         >
           <span className="text-sm font-medium" style={{ color: "var(--accent-hover)" }}>
-            {selectedLeads.size} sélectionné{selectedLeads.size > 1 ? "s" : ""}
+            {selectedLeads.size} s\u00e9lectionn\u00e9{selectedLeads.size > 1 ? "s" : ""}
           </span>
           <button
             className="text-xs px-3 py-1 rounded-md font-medium"
@@ -235,7 +376,7 @@ export function LeadsTable({ leads }: LeadsTableProps) {
             className="text-xs px-3 py-1 rounded-md font-medium"
             style={{ background: "var(--green-subtle)", color: "var(--green)" }}
           >
-            Envoyer à Instantly
+            Envoyer \u00e0 Instantly
           </button>
         </div>
       )}
@@ -404,7 +545,7 @@ export function LeadsTable({ leads }: LeadsTableProps) {
                               {lead.adresse}
                             </p>
                             <p>
-                              <span style={{ color: "var(--text-muted)" }}>Tél:</span>{" "}
+                              <span style={{ color: "var(--text-muted)" }}>T\u00e9l:</span>{" "}
                               {lead.telephone}
                             </p>
                             <p>
@@ -504,7 +645,7 @@ export function LeadsTable({ leads }: LeadsTableProps) {
 
       {filteredLeads.length === 0 && (
         <div className="text-center py-12">
-          <p className="text-lg mb-2">Aucun lead trouvé</p>
+          <p className="text-lg mb-2">Aucun lead trouv\u00e9</p>
           <p className="text-sm" style={{ color: "var(--text-muted)" }}>
             Ajustez vos filtres ou lancez un nouveau scraping
           </p>

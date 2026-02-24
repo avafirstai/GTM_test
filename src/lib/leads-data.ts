@@ -36,8 +36,8 @@ export type SortDirection = "asc" | "desc";
 
 export interface LeadFilters {
   search: string;
-  ville: string;
-  verticale: string;
+  ville: string[];
+  verticale: string[];
   pipeline: string;
   scoreMin: number;
   scoreMax: number;

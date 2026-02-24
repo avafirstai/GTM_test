@@ -85,7 +85,7 @@ export async function GET() {
     return NextResponse.json({
       connected: false,
       campaigns: [],
-      error: "INSTANTLY_API_KEY not configured",
+      error: "not_configured",
     });
   }
 

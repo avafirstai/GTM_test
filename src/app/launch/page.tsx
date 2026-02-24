@@ -73,9 +73,9 @@ interface StreamStep {
 }
 
 export default function LaunchPage() {
-  const [ville, setVille] = useState<string>("");
-  const [customVille, setCustomVille] = useState<string>("");
-  const [niche, setNiche] = useState<string>("");
+  const [villeInput, setVilleInput] = useState<string>("");
+  const [nicheInput, setNicheInput] = useState<string>("");
+  const [nicheId, setNicheId] = useState<string>("");
   const [leadCount, setLeadCount] = useState<number>(500);
 
   const [campaignMode, setCampaignMode] = useState<CampaignMode>("existing");
@@ -102,8 +102,9 @@ export default function LaunchPage() {
   const campaigns = campaignData?.campaigns ?? [];
   const emailsAvailable = statsData?.stats.withEmail ?? 0;
 
-  const selectedVerticale = VERTICALES.find((v) => v.id === niche);
-  const effectiveVille = ville === "_custom" ? customVille : ville;
+  const selectedVerticale = VERTICALES.find((v) => v.id === nicheId);
+  const effectiveVille = villeInput;
+  const effectiveNiche = nicheInput || nicheId;
 
   const estimatedEmails = Math.min(leadCount, emailsAvailable);
   const estimatedResponses = Math.round(estimatedEmails * 0.08);
@@ -159,7 +160,7 @@ export default function LaunchPage() {
   }
 
   const handleLaunch = useCallback(async () => {
-    if (!effectiveVille && !niche) return;
+    if (!effectiveVille && !effectiveNiche) return;
     if (!connected) {
       setErrorMessage("Service email non disponible. Verifiez la configuration.");
       setStatus("error");
@@ -180,7 +181,7 @@ export default function LaunchPage() {
     try {
       const payload: Record<string, unknown> = {
         ville: effectiveVille,
-        niche,
+        niche: effectiveNiche,
         count: leadCount,
       };
 
@@ -253,7 +254,7 @@ export default function LaunchPage() {
       setErrorMessage(err instanceof Error ? err.message : "Erreur reseau");
       setStatus("error");
     }
-  }, [effectiveVille, niche, leadCount, connected, activeCampaignId, selectedCampaignId, campaignMode, newCampaignName, selectedAccounts, abortController]);
+  }, [effectiveVille, effectiveNiche, leadCount, connected, activeCampaignId, selectedCampaignId, campaignMode, newCampaignName, selectedAccounts, abortController]);
 
   const handleReset = useCallback(() => {
     setStatus("idle");
@@ -264,7 +265,7 @@ export default function LaunchPage() {
     setStepLog([]);
   }, []);
 
-  const canLaunch = (effectiveVille || niche) && connected;
+  const canLaunch = (effectiveVille || effectiveNiche) && connected;
 
   // ─── RENDER ───
   if (status !== "idle") {
@@ -298,39 +299,51 @@ export default function LaunchPage() {
         <div className="lg:col-span-3 space-y-5">
           {/* Step 1: Ville */}
           <Section icon={<MapPin size={15} />} title="Ville" step={1}>
+            <input
+              type="text"
+              value={villeInput}
+              onChange={(e) => setVilleInput(e.target.value)}
+              placeholder="Tapez une ville ou laissez vide pour toutes..."
+              className="w-full px-3 py-2 rounded-lg text-sm outline-none mb-2"
+              style={{ background: "var(--bg)", border: "1px solid var(--border)" }}
+            />
             <div className="flex flex-wrap gap-1.5">
-              <Chip selected={ville === ""} onClick={() => { setVille(""); setCustomVille(""); }}>
-                Toutes
-              </Chip>
-              {VILLES_FRANCE.map((v) => (
-                <Chip key={v} selected={ville === v} onClick={() => setVille(v)}>
+              {VILLES_FRANCE.slice(0, 12).map((v) => (
+                <Chip
+                  key={v}
+                  selected={villeInput === v}
+                  onClick={() => setVilleInput(villeInput === v ? "" : v)}
+                >
                   {v}
                 </Chip>
               ))}
-              <Chip selected={ville === "_custom"} onClick={() => setVille("_custom")}>
-                Autre...
-              </Chip>
             </div>
-            {ville === "_custom" && (
-              <input
-                type="text"
-                value={customVille}
-                onChange={(e) => setCustomVille(e.target.value)}
-                placeholder="Nom de la ville..."
-                className="mt-3 w-full px-3 py-2 rounded-lg text-sm outline-none"
-                style={{ background: "var(--bg)", border: "1px solid var(--border)" }}
-              />
-            )}
           </Section>
 
           {/* Step 2: Niche */}
           <Section icon={<Briefcase size={15} />} title="Niche" step={2}>
-            <div className="grid grid-cols-2 gap-1.5 max-h-56 overflow-y-auto pr-1">
-              <Chip selected={niche === ""} onClick={() => setNiche("")}>
-                Toutes
-              </Chip>
+            <input
+              type="text"
+              value={nicheInput}
+              onChange={(e) => { setNicheInput(e.target.value); setNicheId(""); }}
+              placeholder="Tapez une niche ou selectionnez ci-dessous..."
+              className="w-full px-3 py-2 rounded-lg text-sm outline-none mb-2"
+              style={{ background: "var(--bg)", border: "1px solid var(--border)" }}
+            />
+            <div className="grid grid-cols-2 gap-1.5 max-h-48 overflow-y-auto pr-1">
               {VERTICALES.map((v) => (
-                <Chip key={v.id} selected={niche === v.id} onClick={() => setNiche(v.id)}>
+                <Chip
+                  key={v.id}
+                  selected={nicheId === v.id && !nicheInput}
+                  onClick={() => {
+                    if (nicheId === v.id && !nicheInput) {
+                      setNicheId("");
+                    } else {
+                      setNicheId(v.id);
+                      setNicheInput("");
+                    }
+                  }}
+                >
                   <span className="mr-1">{v.icon}</span> {v.name}
                   <span className="ml-auto text-[10px] opacity-60">T{v.tier}</span>
                 </Chip>
@@ -448,7 +461,7 @@ export default function LaunchPage() {
               </div>
             ) : (
               <p className="text-xs py-1" style={{ color: "var(--text-muted)" }}>
-                {connected ? "Aucun compte email trouve." : "En attente de connexion..."}
+                {connected ? "Aucun compte email trouve." : "Ajoutez votre cle API Instantly dans Reglages pour activer l'envoi."}
               </p>
             )}
           </Section>
