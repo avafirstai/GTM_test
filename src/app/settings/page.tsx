@@ -31,11 +31,15 @@ export default function SettingsPage() {
   const succeededRuns = apifyRuns.filter((r) => r.status === "SUCCEEDED").length;
 
   const instantlyConnected = campaignData?.connected ?? false;
+  const instantlyReachable = campaignData?.apiReachable ?? false;
   const instantlyCampaigns = campaignData?.campaigns ?? [];
   const instantlyTotals = campaignData?.totals;
-  const instantlyDetails = instantlyConnected
-    ? `${instantlyCampaigns.length} campagne${instantlyCampaigns.length !== 1 ? "s" : ""} \u00B7 ${instantlyTotals?.totalLeads.toLocaleString() ?? 0} leads \u00B7 ${instantlyTotals?.emailsSent.toLocaleString() ?? 0} envoyes`
-    : "Service email non configure";
+  const instantlyDetails = !instantlyConnected
+    ? "Cle API non configuree"
+    : !instantlyReachable
+      ? "Cle API configuree \u00B7 API temporairement indisponible"
+      : `${instantlyCampaigns.length} campagne${instantlyCampaigns.length !== 1 ? "s" : ""} \u00B7 ${instantlyTotals?.totalLeads.toLocaleString() ?? 0} leads \u00B7 ${instantlyTotals?.emailsSent.toLocaleString() ?? 0} envoyes`;
+  const instantlyStatus = !instantlyConnected ? "planned" : !instantlyReachable ? "limit" : "connected";
 
   return (
     <div className="p-8 max-w-3xl mx-auto">
@@ -52,14 +56,14 @@ export default function SettingsPage() {
         <ApiCard
           name="Instantly.ai"
           icon={<Mail size={18} />}
-          status={instantlyConnected ? "connected" : "planned"}
+          status={instantlyStatus}
           details={instantlyDetails}
         />
         <ApiCard
-          name="Apify"
+          name="Apify (historique)"
           icon={<Globe size={18} />}
-          status="connected"
-          details={`${succeededRuns}/${apifyRuns.length} runs reussis \u00B7 ${stats?.totalLeads.toLocaleString() ?? 0} leads scrappes`}
+          status="limit"
+          details={`${succeededRuns} runs passes \u00B7 ${stats?.totalLeads.toLocaleString() ?? 0} leads importes (pas de connexion API active)`}
         />
         <ApiCard
           name="Email Scraper"
@@ -76,8 +80,8 @@ export default function SettingsPage() {
         <ApiCard
           name="Cal.com"
           icon={<Calendar size={18} />}
-          status="connected"
-          details="cal.com/avafirstai/15min"
+          status="planned"
+          details="Integration booking \u2014 a venir"
         />
         <ApiCard
           name="N8N"
@@ -135,7 +139,7 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {/* Cost Summary */}
+      {/* Cost Summary — Planned */}
       <div
         className="rounded-xl border border-[var(--border)]"
         style={{ background: "var(--bg-raised)" }}
@@ -143,31 +147,10 @@ export default function SettingsPage() {
         <div className="px-5 py-4 border-b border-[var(--border)]">
           <h2 className="text-sm font-medium">Cout total du pipeline</h2>
         </div>
-        <div className="grid grid-cols-3 gap-4 p-5">
-          <div className="text-center">
-            <p className="text-xl font-semibold" style={{ color: "var(--green)" }}>
-              0 &euro;
-            </p>
-            <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-              Cout emails
-            </p>
-          </div>
-          <div className="text-center">
-            <p className="text-xl font-semibold" style={{ color: "var(--green)" }}>
-              0 &euro;
-            </p>
-            <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-              Cout Apify
-            </p>
-          </div>
-          <div className="text-center">
-            <p className="text-xl font-semibold" style={{ color: "var(--green)" }}>
-              0 &euro;
-            </p>
-            <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
-              Total pipeline
-            </p>
-          </div>
+        <div className="p-5 text-center">
+          <p className="text-sm" style={{ color: "var(--text-muted)" }}>
+            Suivi des couts &mdash; a venir (Phase 4)
+          </p>
         </div>
       </div>
 

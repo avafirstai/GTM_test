@@ -84,6 +84,7 @@ export async function GET() {
   if (!apiKey) {
     return NextResponse.json({
       connected: false,
+      apiReachable: false,
       campaigns: [],
       error: "not_configured",
     });
@@ -196,6 +197,7 @@ export async function GET() {
 
     return NextResponse.json({
       connected: true,
+      apiReachable: true,
       activeCampaignId: campaignId || null,
       activeCampaign,
       campaigns: campaignsWithAnalytics,
@@ -204,13 +206,12 @@ export async function GET() {
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
-    return NextResponse.json(
-      {
-        connected: false,
-        campaigns: [],
-        error: message,
-      },
-      { status: 502 }
-    );
+    // Key IS configured — API is just temporarily unreachable
+    return NextResponse.json({
+      connected: true,
+      apiReachable: false,
+      campaigns: [],
+      error: message,
+    });
   }
 }

@@ -24,6 +24,7 @@ export interface Campaign {
 
 export interface CampaignsData {
   connected: boolean;
+  apiReachable?: boolean;
   activeCampaignId: string | null;
   activeCampaign: Campaign | null;
   campaigns: Campaign[];

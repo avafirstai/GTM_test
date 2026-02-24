@@ -466,6 +466,15 @@ export default function LaunchPage() {
             )}
           </Section>
 
+          {/* Degraded API warning */}
+          {campaignData?.connected && campaignData?.apiReachable === false && (
+            <div className="rounded-lg p-3" style={{ background: "var(--amber-subtle)" }}>
+              <p className="text-xs" style={{ color: "var(--amber)" }}>
+                API Instantly temporairement indisponible. Vous pouvez preparer votre campagne.
+              </p>
+            </div>
+          )}
+
           {/* Estimation */}
           <div className="rounded-xl p-4 border border-[var(--border)]" style={{ background: "var(--bg-raised)" }}>
             <p className="text-xs font-medium mb-3" style={{ color: "var(--text-muted)" }}>Estimation</p>

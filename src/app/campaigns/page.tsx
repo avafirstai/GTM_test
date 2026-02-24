@@ -62,6 +62,15 @@ export default function CampaignsPage() {
         </p>
       </div>
 
+      {/* Degraded API warning */}
+      {connected && campaignData?.apiReachable === false && (
+        <div className="rounded-lg p-3 mb-6" style={{ background: "var(--amber-subtle)" }}>
+          <p className="text-xs" style={{ color: "var(--amber)" }}>
+            API Instantly temporairement indisponible — les donnees affichees peuvent etre obsoletes.
+          </p>
+        </div>
+      )}
+
       {/* Onboarding card when not connected */}
       {!connected && (
         <div

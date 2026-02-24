@@ -41,9 +41,9 @@ export async function GET() {
 
     if (!resp.ok) {
       const errorText = await resp.text().catch(() => "unknown");
+      // Key IS configured — API just returned an error
       return NextResponse.json(
-        { connected: false, accounts: [], error: `Instantly API ${resp.status}: ${errorText.slice(0, 200)}` },
-        { status: 502 },
+        { connected: true, accounts: [], error: `Instantly API ${resp.status}: ${errorText.slice(0, 200)}` },
       );
     }
 
@@ -69,9 +69,9 @@ export async function GET() {
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
+    // Key IS configured — API is just temporarily unreachable
     return NextResponse.json(
-      { connected: false, accounts: [], error: message },
-      { status: 502 },
+      { connected: true, accounts: [], error: message },
     );
   }
 }

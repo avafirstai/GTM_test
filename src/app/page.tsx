@@ -115,6 +115,13 @@ export default function Dashboard() {
           )}
         </div>
         <div className="p-5">
+          {campaignData?.connected && campaignData?.apiReachable === false && (
+            <div className="rounded-lg p-2 mb-3" style={{ background: "var(--amber-subtle)" }}>
+              <p className="text-[11px]" style={{ color: "var(--amber)" }}>
+                API Instantly temporairement indisponible
+              </p>
+            </div>
+          )}
           {!connected ? (
             <p className="text-sm text-center py-6" style={{ color: "var(--text-muted)" }}>
               Aucune campagne active. Lancez votre premiere campagne.
