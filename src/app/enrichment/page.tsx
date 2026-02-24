@@ -247,6 +247,21 @@ export default function EnrichmentPage() {
       .then((d) => {
         if (d.success && d.jobs.length > 0) {
           const runningJob = d.jobs[0] as EnrichJob;
+          // Safety: if the job has been "running" for more than 10 minutes, treat it as stale
+          const jobAge = Date.now() - new Date(runningJob.created_at).getTime();
+          const MAX_JOB_AGE_MS = 10 * 60 * 1000; // 10 minutes
+          if (jobAge > MAX_JOB_AGE_MS) {
+            // Stale job — skip to last completed
+            fetch("/api/enrich/jobs?status=completed&limit=1")
+              .then((r2) => r2.json())
+              .then((d2) => {
+                if (d2.success && d2.jobs.length > 0) {
+                  restoreFromJob(d2.jobs[0] as EnrichJob);
+                }
+              })
+              .catch(() => {});
+            return;
+          }
           setJobId(runningJob.id);
           setStatus("running");
           setTarget("Reprise en cours...");
@@ -304,8 +319,20 @@ export default function EnrichmentPage() {
 
   function startPolling(id: string) {
     if (pollRef.current) clearInterval(pollRef.current);
+    let pollCount = 0;
+    const MAX_POLL_CYCLES = 100; // ~5 minutes at 3s interval
 
     pollRef.current = setInterval(async () => {
+      pollCount++;
+      // Safety: stop polling after too many cycles to prevent infinite spin
+      if (pollCount > MAX_POLL_CYCLES) {
+        if (pollRef.current) clearInterval(pollRef.current);
+        setStatus("error");
+        setErrorMsg("Timeout: le job ne repond plus (abandon apres 5 min de polling)");
+        stopTimer();
+        return;
+      }
+
       try {
         const res = await fetch(`/api/enrich/jobs/${id}`);
         const d = await res.json();

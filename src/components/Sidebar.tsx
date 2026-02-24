@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import {
   LayoutDashboard,
   Rocket,
+  Globe,
   Users,
   Mail,
   MessageSquareText,
@@ -22,10 +23,11 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/launch", label: "Lancer", icon: Rocket },
+  { href: "/scraping", label: "Scraping", icon: Globe },
   { href: "/leads", label: "Leads", icon: Users },
-  { href: "/campaigns", label: "Campagnes", icon: Mail },
-  { href: "/replies", label: "Reponses", icon: MessageSquareText },
   { href: "/enrichment", label: "Enrichissement", icon: Zap },
+  { href: "/campaigns", label: "Campagnes", icon: Mail },
+  { href: "/replies", label: "Réponses", icon: MessageSquareText },
 ];
 
 export function Sidebar() {
