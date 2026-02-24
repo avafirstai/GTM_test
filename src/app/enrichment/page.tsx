@@ -462,6 +462,8 @@ export default function EnrichmentPage() {
               } else if (eventType === "done") {
                 stopTimer();
                 setStatus("done");
+                // Clear ref so post-stream code doesn't start polling after a clean finish
+                latestJobIdRef.current = null;
                 const parsedSummary = safeSummary(data.summary);
                 if (parsedSummary) setSummary(parsedSummary);
                 const parsedStats = safeSourceStats(data.sourceStats);
@@ -470,6 +472,7 @@ export default function EnrichmentPage() {
               } else if (eventType === "error") {
                 stopTimer();
                 setStatus("error");
+                latestJobIdRef.current = null;
                 setErrorMsg((data as { message: string }).message);
               }
             } catch {
