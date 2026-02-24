@@ -103,7 +103,7 @@ export default function LaunchPage() {
   const estimatedResponses = Math.round(estimatedEmails * 0.08);
   const estimatedRDV = Math.round(estimatedResponses * 0.3);
   const estimatedRevenue = selectedVerticale
-    ? Math.round(estimatedRDV * parseInt(selectedVerticale.dealValue))
+    ? Math.round(estimatedRDV * (parseFloat(selectedVerticale.dealValue.replace(/[^\d.]/g, "")) || 0))
     : 0;
 
   // ─── Load Instantly email accounts ───
@@ -134,6 +134,47 @@ export default function LaunchPage() {
     );
   }, []);
 
+  // ─── Abort controller for SSE stream ───
+  const [abortController, setAbortController] = useState<AbortController | null>(null);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      abortController?.abort();
+    };
+  }, [abortController]);
+
+  // ─── SSE event parser (handles chunk-split correctly) ───
+  function parseSSEEvents(
+    buffer: string,
+    onEvent: (event: string, data: string) => void,
+  ): string {
+    // SSE events are separated by double newlines
+    const parts = buffer.split("\n\n");
+    // Last part might be incomplete — keep it in buffer
+    const remaining = parts.pop() || "";
+
+    for (const block of parts) {
+      if (!block.trim()) continue;
+      let eventType = "";
+      let eventData = "";
+
+      for (const line of block.split("\n")) {
+        if (line.startsWith("event: ")) {
+          eventType = line.slice(7).trim();
+        } else if (line.startsWith("data: ")) {
+          eventData = line.slice(6);
+        }
+      }
+
+      if (eventType && eventData) {
+        onEvent(eventType, eventData);
+      }
+    }
+
+    return remaining;
+  }
+
   // ─── LAUNCH (SSE stream) ───
   const handleLaunch = useCallback(async () => {
     if (!effectiveVille && !niche) return;
@@ -142,6 +183,11 @@ export default function LaunchPage() {
       setStatus("error");
       return;
     }
+
+    // Abort any previous stream
+    abortController?.abort();
+    const controller = new AbortController();
+    setAbortController(controller);
 
     setStatus("streaming");
     setResults(null);
@@ -157,7 +203,6 @@ export default function LaunchPage() {
         count: leadCount,
       };
 
-      // Fix 2: Use selected campaign ID from the list
       if (campaignMode === "existing") {
         payload.campaignId = selectedCampaignId || activeCampaignId;
       } else if (campaignMode === "new" && newCampaignName.trim()) {
@@ -168,11 +213,11 @@ export default function LaunchPage() {
         payload.emailAccounts = selectedAccounts;
       }
 
-      // Fix 3: Use SSE streaming endpoint
       const resp = await fetch("/api/orchestrate/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
+        signal: controller.signal,
       });
 
       if (!resp.ok) {
@@ -198,45 +243,41 @@ export default function LaunchPage() {
 
         buffer += decoder.decode(value, { stream: true });
 
-        // Parse SSE events from buffer
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-
-        let currentEvent = "";
-        for (const line of lines) {
-          if (line.startsWith("event: ")) {
-            currentEvent = line.slice(7).trim();
-          } else if (line.startsWith("data: ") && currentEvent) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              if (currentEvent === "step") {
-                const stepData = data as StreamStep;
-                setCurrentStep(stepData);
-                setStepLog((prev) => [...prev, stepData.message]);
-              } else if (currentEvent === "progress") {
-                setProgress(data as StreamProgress);
-              } else if (currentEvent === "done") {
-                setResults(data as OrchestrationResult);
-                setStatus("done");
-              } else if (currentEvent === "error") {
-                setErrorMessage((data as { error: string }).error);
-                setStatus("error");
-              }
-            } catch {
-              // Malformed JSON — skip
+        // Parse complete SSE events from buffer (handles chunk-split)
+        buffer = parseSSEEvents(buffer, (eventType, eventData) => {
+          try {
+            const data = JSON.parse(eventData);
+            if (eventType === "step") {
+              const stepData = data as StreamStep;
+              setCurrentStep(stepData);
+              setStepLog((prev) => {
+                // Cap log at 100 entries to prevent unbounded growth
+                const next = [...prev, stepData.message];
+                return next.length > 100 ? next.slice(-100) : next;
+              });
+            } else if (eventType === "progress") {
+              setProgress(data as StreamProgress);
+            } else if (eventType === "done") {
+              setResults(data as OrchestrationResult);
+              setStatus("done");
+            } else if (eventType === "error") {
+              setErrorMessage((data as { error: string }).error);
+              setStatus("error");
             }
-            currentEvent = "";
+          } catch {
+            // Malformed JSON in SSE event — skip
           }
-        }
+        });
       }
 
       // Stream ended — if no done/error event was received, mark done
       setStatus((prev) => prev === "streaming" ? "done" : prev);
     } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
       setErrorMessage(err instanceof Error ? err.message : "Network error");
       setStatus("error");
     }
-  }, [effectiveVille, niche, leadCount, connected, activeCampaignId, selectedCampaignId, campaignMode, newCampaignName, selectedAccounts]);
+  }, [effectiveVille, niche, leadCount, connected, activeCampaignId, selectedCampaignId, campaignMode, newCampaignName, selectedAccounts, abortController]);
 
   const handleReset = useCallback(() => {
     setStatus("idle");

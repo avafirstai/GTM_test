@@ -1,15 +1,164 @@
 /**
  * Shared lead processing utilities for GTM orchestrator.
  *
+ * Single source of truth for:
+ * - Instantly API client (with timeout + sanitized errors)
+ * - Verticale category mapping
  * - Email validation (format + disposable domain blacklist)
  * - Lead deduplication (in-memory Set)
  * - Name parsing (first_name + last_name)
+ * - Supabase query builder
  * - Batch building for Instantly bulk API
  */
 
+import { supabase } from "@/lib/supabase";
+
+// ─── Instantly API client ───
+
+const INSTANTLY_API_BASE = "https://api.instantly.ai/api/v2";
+const INSTANTLY_TIMEOUT_MS = 30_000;
+
+export interface InstantlyCampaignResponse {
+  id: string;
+  name: string;
+  status: string;
+}
+
+export interface InstantlyBulkResponse {
+  status?: string;
+  total_sent?: number;
+  leads_uploaded?: number;
+  already_in_campaign?: number;
+  invalid_email_count?: number;
+  duplicate_email_count?: number;
+}
+
+/**
+ * Fetch from Instantly API v2 with timeout and sanitized errors.
+ * Throws a generic message — never leaks API response bodies to clients.
+ */
+export async function instantlyFetch(
+  endpoint: string,
+  method: string = "GET",
+  body?: Record<string, unknown>,
+): Promise<unknown> {
+  const apiKey = process.env.INSTANTLY_API_KEY;
+  if (!apiKey) throw new Error("Instantly API key not configured");
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), INSTANTLY_TIMEOUT_MS);
+
+  try {
+    const resp = await fetch(`${INSTANTLY_API_BASE}${endpoint}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: controller.signal,
+    });
+
+    if (!resp.ok) {
+      // Log full error server-side for debugging, but throw sanitized message
+      const errorText = await resp.text().catch(() => "");
+      console.error(`[Instantly] ${method} ${endpoint} → ${resp.status}: ${errorText.slice(0, 300)}`);
+      throw new Error(`Instantly API error (${resp.status})`);
+    }
+
+    return resp.json();
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error("Instantly API timeout");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ─── Verticale categories ───
+
+export const VERTICALE_CATEGORIES: Record<string, string[]> = {
+  sante_dentaire: ["dentiste", "cabinet dentaire", "orthodontiste", "chirurgien-dentiste"],
+  sante_medical: ["médecin", "cabinet médical", "centre médical", "médecin généraliste"],
+  immobilier: ["agence immobilière", "agence de gestion locative", "syndic"],
+  juridique: ["avocat", "cabinet d'avocats", "notaire", "huissier"],
+  comptable: ["expert-comptable", "cabinet comptable", "cabinet d'audit"],
+  formation: ["centre de formation", "auto-école", "école", "organisme de formation"],
+  beaute: ["salon de coiffure", "institut de beauté", "spa", "barbier"],
+  veterinaire: ["vétérinaire", "clinique vétérinaire"],
+  restaurant_hg: ["restaurant", "traiteur", "hôtel restaurant"],
+  artisan_premium: ["plombier", "électricien", "serrurier", "chauffagiste"],
+  hotellerie: ["hôtel", "résidence hôtelière", "chambre d'hôtes"],
+  cinema: ["cinéma", "salle de spectacle", "théâtre"],
+  auto_ecole: ["auto-école", "école de conduite"],
+  concession_auto: ["concession automobile", "garage automobile"],
+  agence_voyage: ["agence de voyage", "tour-opérateur"],
+};
+
+// ─── Request body schema ───
+
+export interface OrchestrateBody {
+  ville?: string;
+  niche?: string;
+  count?: number;
+  campaignId?: string;
+  campaignName?: string;
+  emailAccounts?: string[];
+  autoLaunch?: boolean;
+}
+
+// ─── Supabase lead query ───
+
+export interface RawLead {
+  name: string | null;
+  email: string | null;
+  phone: string | null;
+  website: string | null;
+  city: string | null;
+  category: string | null;
+}
+
+/**
+ * Query Supabase for matching leads with email, filtered by city/niche.
+ */
+export async function queryLeads(
+  ville: string,
+  niche: string,
+  count: number,
+): Promise<{ data: RawLead[] | null; error: string | null }> {
+  let query = supabase
+    .from("gtm_leads")
+    .select("name, email, phone, website, city, category")
+    .not("email", "is", null)
+    .neq("email", "")
+    .limit(count);
+
+  if (ville) {
+    query = query.ilike("city", `%${ville}%`);
+  }
+
+  if (niche) {
+    const categories = VERTICALE_CATEGORIES[niche];
+    if (categories && categories.length > 0) {
+      const orFilter = categories.map((cat) => `category.ilike.%${cat}%`).join(",");
+      query = query.or(orFilter);
+    } else {
+      query = query.ilike("category", `%${niche}%`);
+    }
+  }
+
+  const { data, error } = await query;
+  return {
+    data: data as RawLead[] | null,
+    error: error ? error.message : null,
+  };
+}
+
 // ─── Email validation ───
 
-const EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+const EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?)*\.[a-zA-Z]{2,}$/;
 
 /** Domains known to be disposable, catch-all, or generic junk */
 const BLOCKED_DOMAINS = new Set([
@@ -19,6 +168,8 @@ const BLOCKED_DOMAINS = new Set([
   "guerrillamailblock.com", "grr.la", "discard.email",
   "temp-mail.org", "fakeinbox.com", "mailnesia.com",
   "noreply.com", "no-reply.com",
+  "10minutemail.com", "guerrillamail.info", "maildrop.cc",
+  "tempail.com", "throwaway.com", "mailcatch.com",
 ]);
 
 /** Email prefixes that are typically role-based / not personal */
@@ -38,11 +189,9 @@ export function validateEmail(raw: string | null | undefined): string | null {
   if (!email || email.length > 254) return null;
   if (!EMAIL_REGEX.test(email)) return null;
 
-  const domain = email.split("@")[1];
-  if (!domain) return null;
+  const [prefix, domain] = email.split("@");
+  if (!prefix || !domain) return null;
   if (BLOCKED_DOMAINS.has(domain)) return null;
-
-  const prefix = email.split("@")[0];
   if (JUNK_PREFIXES.has(prefix)) return null;
 
   return email;
@@ -61,7 +210,7 @@ interface ParsedName {
  * Best-effort: splits on spaces, takes first word as firstName.
  */
 export function parseName(rawName: string | null | undefined): ParsedName {
-  const name = (rawName || "").trim();
+  const name = (rawName || "").trim().slice(0, 200);
   if (!name) {
     return { firstName: "Contact", lastName: "", companyName: "" };
   }
@@ -84,19 +233,29 @@ export function parseName(rawName: string | null | undefined): ParsedName {
 
 // ─── Deduplication ───
 
+export interface DeduplicateResult<T> {
+  unique: T[];
+  duplicateCount: number;
+  invalidCount: number;
+}
+
 /**
- * Dedup leads by email. Returns only unique leads (first occurrence wins).
+ * Dedup leads by email. Returns unique leads, duplicate count, and invalid count.
  */
 export function deduplicateLeads<T extends { email?: string | null }>(
   leads: T[],
-): { unique: T[]; duplicateCount: number } {
+): DeduplicateResult<T> {
   const seen = new Set<string>();
   const unique: T[] = [];
   let duplicateCount = 0;
+  let invalidCount = 0;
 
   for (const lead of leads) {
     const email = validateEmail(lead.email);
-    if (!email) continue;
+    if (!email) {
+      invalidCount++;
+      continue;
+    }
 
     if (seen.has(email)) {
       duplicateCount++;
@@ -107,19 +266,10 @@ export function deduplicateLeads<T extends { email?: string | null }>(
     unique.push(lead);
   }
 
-  return { unique, duplicateCount };
+  return { unique, duplicateCount, invalidCount };
 }
 
 // ─── Instantly bulk payload builder ───
-
-interface LeadRecord {
-  name?: string | null;
-  email?: string | null;
-  phone?: string | null;
-  website?: string | null;
-  city?: string | null;
-  category?: string | null;
-}
 
 interface InstantlyLeadPayload {
   email: string;
@@ -131,7 +281,7 @@ interface InstantlyLeadPayload {
   custom_variables?: Record<string, string>;
 }
 
-interface InstantlyBulkPayload {
+export interface InstantlyBulkPayload {
   campaign_id: string;
   skip_if_in_workspace: boolean;
   skip_if_in_campaign: boolean;
@@ -143,7 +293,7 @@ interface InstantlyBulkPayload {
  * Max 500 leads per batch (API limit).
  */
 export function buildBulkPayloads(
-  leads: LeadRecord[],
+  leads: RawLead[],
   campaignId: string,
 ): InstantlyBulkPayload[] {
   const BATCH_SIZE = 500;
@@ -166,11 +316,12 @@ export function buildBulkPayloads(
         company_name: companyName,
       };
 
-      // Custom variables for extra data
+      if (lead.phone) payload.phone = lead.phone;
+      if (lead.website) payload.website = lead.website;
+
+      // Extra data as custom variables
       const customVars: Record<string, string> = {};
-      if (lead.website) customVars.website = lead.website;
       if (lead.city) customVars.city = lead.city;
-      if (lead.phone) customVars.phone = lead.phone;
       if (lead.category) customVars.lt_category = lead.category;
 
       if (Object.keys(customVars).length > 0) {

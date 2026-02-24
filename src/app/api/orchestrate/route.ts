@@ -1,6 +1,14 @@
 import { NextResponse } from "next/server";
-import { supabase } from "@/lib/supabase";
-import { deduplicateLeads, buildBulkPayloads } from "@/lib/lead-utils";
+import {
+  instantlyFetch,
+  queryLeads,
+  deduplicateLeads,
+  buildBulkPayloads,
+  type OrchestrateBody,
+  type InstantlyCampaignResponse,
+  type InstantlyBulkResponse,
+  type InstantlyBulkPayload,
+} from "@/lib/lead-utils";
 
 export const dynamic = "force-dynamic";
 
@@ -8,99 +16,19 @@ export const dynamic = "force-dynamic";
  * POST /api/orchestrate — Full GTM campaign orchestrator (non-streaming).
  *
  * Pipeline: Query Supabase → Validate + Dedup → Bulk Upload (500/batch) → Activate
- *
- * Body: {
- *   ville: string,                  // city filter (e.g. "Paris")
- *   niche: string,                  // verticale ID or category keyword
- *   count: number,                  // max leads to upload
- *   campaignId?: string,            // existing campaign ID (defaults to env)
- *   campaignName?: string,          // create new campaign with this name
- *   emailAccounts?: string[],       // Instantly email account IDs to assign
- *   autoLaunch?: boolean,           // activate campaign after upload (default: true)
- * }
  */
-
-const INSTANTLY_API_BASE = "https://api.instantly.ai/api/v2";
-
-const VERTICALE_CATEGORIES: Record<string, string[]> = {
-  sante_dentaire: ["dentiste", "cabinet dentaire", "orthodontiste", "chirurgien-dentiste"],
-  sante_medical: ["médecin", "cabinet médical", "centre médical", "médecin généraliste"],
-  immobilier: ["agence immobilière", "agence de gestion locative", "syndic"],
-  juridique: ["avocat", "cabinet d'avocats", "notaire", "huissier"],
-  comptable: ["expert-comptable", "cabinet comptable", "cabinet d'audit"],
-  formation: ["centre de formation", "auto-école", "école", "organisme de formation"],
-  beaute: ["salon de coiffure", "institut de beauté", "spa", "barbier"],
-  veterinaire: ["vétérinaire", "clinique vétérinaire"],
-  restaurant_hg: ["restaurant", "traiteur", "hôtel restaurant"],
-  artisan_premium: ["plombier", "électricien", "serrurier", "chauffagiste"],
-  hotellerie: ["hôtel", "résidence hôtelière", "chambre d'hôtes"],
-  cinema: ["cinéma", "salle de spectacle", "théâtre"],
-  auto_ecole: ["auto-école", "école de conduite"],
-  concession_auto: ["concession automobile", "garage automobile"],
-  agence_voyage: ["agence de voyage", "tour-opérateur"],
-};
-
-interface InstantlyCampaignResponse {
-  id: string;
-  name: string;
-  status: string;
-}
-
-interface InstantlyBulkResponse {
-  status?: string;
-  total_sent?: number;
-  leads_uploaded?: number;
-  already_in_campaign?: number;
-  invalid_email_count?: number;
-  duplicate_email_count?: number;
-}
-
-async function instantlyFetch(
-  endpoint: string,
-  method: string = "GET",
-  body?: Record<string, unknown>,
-): Promise<unknown> {
-  const apiKey = process.env.INSTANTLY_API_KEY;
-  if (!apiKey) throw new Error("INSTANTLY_API_KEY not configured");
-
-  const resp = await fetch(`${INSTANTLY_API_BASE}${endpoint}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-
-  if (!resp.ok) {
-    const errorText = await resp.text().catch(() => "unknown error");
-    throw new Error(`Instantly API ${resp.status}: ${errorText.slice(0, 200)}`);
-  }
-
-  return resp.json();
-}
-
 export async function POST(request: Request) {
   const apiKey = process.env.INSTANTLY_API_KEY;
   const defaultCampaignId = process.env.INSTANTLY_CAMPAIGN_ID;
 
   if (!apiKey) {
     return NextResponse.json(
-      { error: "INSTANTLY_API_KEY not configured" },
+      { error: "Instantly API key not configured" },
       { status: 500 },
     );
   }
 
-  let body: {
-    ville?: string;
-    niche?: string;
-    count?: number;
-    campaignId?: string;
-    campaignName?: string;
-    emailAccounts?: string[];
-    autoLaunch?: boolean;
-  };
-
+  let body: OrchestrateBody;
   try {
     body = await request.json();
   } catch {
@@ -131,7 +59,7 @@ export async function POST(request: Request) {
 
     if (!campaignId) {
       return NextResponse.json(
-        { error: "No campaign ID. Provide campaignId, campaignName, or set INSTANTLY_CAMPAIGN_ID" },
+        { error: "No campaign ID provided" },
         { status: 400 },
       );
     }
@@ -143,37 +71,16 @@ export async function POST(request: Request) {
           account_ids: body.emailAccounts,
         });
       } catch (err) {
-        console.error("Failed to assign email accounts:", err instanceof Error ? err.message : err);
+        console.error("[Orchestrate] Failed to assign email accounts:", err instanceof Error ? err.message : "unknown");
       }
     }
 
     // ─── Step 3: Query Supabase for matching leads ───
-    let query = supabase
-      .from("gtm_leads")
-      .select("name, email, phone, website, city, category")
-      .not("email", "is", null)
-      .neq("email", "")
-      .limit(count);
-
-    if (ville) {
-      query = query.ilike("city", `%${ville}%`);
-    }
-
-    if (niche) {
-      const categories = VERTICALE_CATEGORIES[niche];
-      if (categories && categories.length > 0) {
-        const orFilter = categories.map((cat) => `category.ilike.%${cat}%`).join(",");
-        query = query.or(orFilter);
-      } else {
-        query = query.ilike("category", `%${niche}%`);
-      }
-    }
-
-    const { data: rawLeads, error: dbError } = await query;
+    const { data: rawLeads, error: dbError } = await queryLeads(ville, niche, count);
 
     if (dbError) {
       return NextResponse.json(
-        { error: `Database error: ${dbError.message}` },
+        { error: "Database query failed" },
         { status: 500 },
       );
     }
@@ -187,14 +94,13 @@ export async function POST(request: Request) {
         total: 0,
         skippedInvalid: 0,
         skippedDuplicate: 0,
-        message: `No leads with email found for ville="${ville}" niche="${niche}"`,
+        message: "No leads with email found for the given filters",
         filters: { ville, niche, count },
       });
     }
 
     // ─── Step 3b: Validate + Deduplicate ───
-    const { unique: leads, duplicateCount } = deduplicateLeads(rawLeads);
-    const skippedInvalid = rawLeads.length - leads.length - duplicateCount;
+    const { unique: leads, duplicateCount, invalidCount } = deduplicateLeads(rawLeads);
 
     if (leads.length === 0) {
       return NextResponse.json({
@@ -203,7 +109,7 @@ export async function POST(request: Request) {
         uploaded: 0,
         errors: 0,
         total: rawLeads.length,
-        skippedInvalid,
+        skippedInvalid: invalidCount,
         skippedDuplicate: duplicateCount,
         message: "All leads filtered out (invalid emails or duplicates)",
         filters: { ville, niche, count },
@@ -220,7 +126,11 @@ export async function POST(request: Request) {
     for (let i = 0; i < batches.length; i++) {
       const batch = batches[i];
       try {
-        const result = (await instantlyFetch("/leads", "POST", batch as unknown as Record<string, unknown>)) as InstantlyBulkResponse;
+        const result = (await instantlyFetch(
+          "/leads",
+          "POST",
+          batch as unknown as Record<string, unknown>,
+        )) as InstantlyBulkResponse;
 
         totalUploaded += result.leads_uploaded ?? batch.leads.length;
         totalSkippedByInstantly += (result.already_in_campaign ?? 0) + (result.duplicate_email_count ?? 0);
@@ -228,8 +138,9 @@ export async function POST(request: Request) {
       } catch (err) {
         totalErrors += batch.leads.length;
         if (errorDetails.length < 5) {
-          errorDetails.push(err instanceof Error ? err.message : "network error");
+          errorDetails.push(`Batch ${i + 1}: upload failed`);
         }
+        console.error(`[Orchestrate] Batch ${i + 1} failed:`, err instanceof Error ? err.message : "unknown");
       }
     }
 
@@ -243,7 +154,8 @@ export async function POST(request: Request) {
         await instantlyFetch(`/campaigns/${campaignId}/activate`, "POST");
         campaignLaunched = true;
       } catch (err) {
-        launchError = err instanceof Error ? err.message : "Failed to activate campaign";
+        launchError = "Campaign activation failed";
+        console.error("[Orchestrate] Activation failed:", err instanceof Error ? err.message : "unknown");
       }
     }
 
@@ -254,7 +166,7 @@ export async function POST(request: Request) {
       errors: totalErrors,
       total: rawLeads.length,
       validLeads: leads.length,
-      skippedInvalid,
+      skippedInvalid: invalidCount,
       skippedDuplicate: duplicateCount,
       skippedByInstantly: totalSkippedByInstantly,
       campaignLaunched,
@@ -264,9 +176,9 @@ export async function POST(request: Request) {
       timestamp: new Date().toISOString(),
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
+    console.error("[Orchestrate] Unexpected error:", err instanceof Error ? err.message : "unknown");
     return NextResponse.json(
-      { error: message },
+      { error: "Orchestration failed" },
       { status: 502 },
     );
   }
