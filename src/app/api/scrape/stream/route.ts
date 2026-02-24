@@ -207,12 +207,35 @@ export async function POST(request: Request) {
               .select("id");
 
             if (upsertErr) {
-              // If upsert fails (e.g. place_id constraint not yet created), try insert
-              const { data: inserted } = await supabase
+              // Log upsert error to SSE so frontend can see it
+              send("db_warning", {
+                verticale: combo.verticaleName,
+                ville: combo.ville,
+                error: upsertErr.message,
+                code: upsertErr.code,
+                hint: upsertErr.hint ?? null,
+                phase: "upsert",
+              });
+
+              // Fallback: try plain insert
+              const { data: inserted, error: insertErr } = await supabase
                 .from("gtm_leads")
                 .insert(rows)
                 .select("id");
-              comboNew = inserted?.length ?? newPlaces.length;
+
+              if (insertErr) {
+                send("db_warning", {
+                  verticale: combo.verticaleName,
+                  ville: combo.ville,
+                  error: insertErr.message,
+                  code: insertErr.code,
+                  hint: insertErr.hint ?? null,
+                  phase: "insert_fallback",
+                });
+                comboNew = 0; // Both failed — 0 leads actually saved
+              } else {
+                comboNew = inserted?.length ?? 0;
+              }
             } else {
               comboNew = upserted?.length ?? newPlaces.length;
             }
