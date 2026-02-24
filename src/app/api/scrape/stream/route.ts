@@ -155,6 +155,21 @@ export async function POST(request: Request) {
         let totalDuplicates = 0;
         const globalSeenPlaceIds = new Set<string>();
 
+        // Pre-flight: seed with existing place_ids from DB for these cities
+        // so we detect cross-session duplicates BEFORE attempting inserts
+        const { data: existingRows } = await supabase
+          .from("gtm_leads")
+          .select("place_id")
+          .in("city", body.villes)
+          .not("place_id", "is", null);
+
+        if (existingRows) {
+          for (const row of existingRows) {
+            const pid = (row as { place_id: string | null }).place_id;
+            if (pid) globalSeenPlaceIds.add(pid);
+          }
+        }
+
         for (let i = 0; i < combos.length; i++) {
           const combo = combos[i];
 
@@ -219,7 +234,7 @@ export async function POST(request: Request) {
 
             const { data: upserted, error: upsertErr } = await supabase
               .from("gtm_leads")
-              .upsert(rows, { onConflict: "place_id", ignoreDuplicates: false })
+              .upsert(rows, { onConflict: "place_id", ignoreDuplicates: true })
               .select("id");
 
             if (upsertErr) {
@@ -232,28 +247,11 @@ export async function POST(request: Request) {
                 hint: upsertErr.hint ?? null,
                 phase: "upsert",
               });
-
-              // Fallback: try plain insert
-              const { data: inserted, error: insertErr } = await supabase
-                .from("gtm_leads")
-                .insert(rows)
-                .select("id");
-
-              if (insertErr) {
-                send("db_warning", {
-                  verticale: combo.verticaleName,
-                  ville: combo.ville,
-                  error: insertErr.message,
-                  code: insertErr.code,
-                  hint: insertErr.hint ?? null,
-                  phase: "insert_fallback",
-                });
-                comboNew = 0; // Both failed — 0 leads actually saved
-              } else {
-                comboNew = inserted?.length ?? 0;
-              }
+              // No fallback INSERT — it would create duplicates.
+              // The upsert works with the UNIQUE constraint on place_id.
+              comboNew = 0;
             } else {
-              comboNew = upserted?.length ?? newPlaces.length;
+              comboNew = upserted?.length ?? 0;
             }
           }
 

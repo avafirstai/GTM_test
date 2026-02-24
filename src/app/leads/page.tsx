@@ -39,7 +39,14 @@ export default function LeadsPage() {
     async function load() {
       try {
         const [leadsRes, statsRes] = await Promise.all([
-          fetchLeads({ limit: 500, sortBy: "score", sortDir: "desc" }),
+          fetchLeads({
+            limit: 500,
+            sortBy: "score",
+            sortDir: "desc",
+            ...(villeParams.length > 0 ? { city: villeParams } : {}),
+            ...(verticaleParams.length > 0 ? { category: verticaleParams } : {}),
+            ...(hasEmailParam === "yes" || hasEmailParam === "no" ? { hasEmail: hasEmailParam } : {}),
+          }),
           fetch("/api/stats").then((r) => r.json()),
         ]);
         setLeads(leadsRes.leads);

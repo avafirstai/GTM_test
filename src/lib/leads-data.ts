@@ -156,8 +156,8 @@ export async function fetchLeads(params?: {
   limit?: number;
   offset?: number;
   search?: string;
-  city?: string;
-  category?: string;
+  city?: string | string[];
+  category?: string | string[];
   hasEmail?: string;
   sortBy?: string;
   sortDir?: string;
@@ -167,8 +167,15 @@ export async function fetchLeads(params?: {
   if (params?.limit) searchParams.set("limit", String(params.limit));
   if (params?.offset) searchParams.set("offset", String(params.offset));
   if (params?.search) searchParams.set("search", params.search);
-  if (params?.city) searchParams.set("city", params.city);
-  if (params?.category) searchParams.set("category", params.category);
+  // Support single or multi-value city/category
+  if (params?.city) {
+    const cities = Array.isArray(params.city) ? params.city : [params.city];
+    for (const c of cities) searchParams.append("city", c);
+  }
+  if (params?.category) {
+    const cats = Array.isArray(params.category) ? params.category : [params.category];
+    for (const c of cats) searchParams.append("category", c);
+  }
   if (params?.hasEmail) searchParams.set("hasEmail", params.hasEmail);
   if (params?.sortBy) searchParams.set("sortBy", params.sortBy);
   if (params?.sortDir) searchParams.set("sortDir", params.sortDir);

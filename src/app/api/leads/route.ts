@@ -11,8 +11,8 @@ export async function GET(request: Request) {
   const sortBy = searchParams.get("sortBy") || "score";
   const sortDir = searchParams.get("sortDir") || "desc";
   const search = searchParams.get("search") || "";
-  const city = searchParams.get("city") || "";
-  const category = searchParams.get("category") || "";
+  const cities = searchParams.getAll("city").filter(Boolean);
+  const categories = searchParams.getAll("category").filter(Boolean);
   const hasEmail = searchParams.get("hasEmail") || "";
   const enrichmentStatus = searchParams.get("enrichmentStatus") || "";
 
@@ -32,11 +32,15 @@ export async function GET(request: Request) {
       );
     }
   }
-  if (city) {
-    query = query.eq("city", city);
+  if (cities.length === 1) {
+    query = query.eq("city", cities[0]);
+  } else if (cities.length > 1) {
+    query = query.in("city", cities);
   }
-  if (category) {
-    query = query.eq("category", category);
+  if (categories.length === 1) {
+    query = query.eq("category", categories[0]);
+  } else if (categories.length > 1) {
+    query = query.in("category", categories);
   }
   if (hasEmail === "yes") {
     query = query.not("email", "is", null).neq("email", "");
