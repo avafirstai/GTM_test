@@ -1,14 +1,13 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
+import { deduplicateLeads, buildBulkPayloads } from "@/lib/lead-utils";
 
 export const dynamic = "force-dynamic";
 
 /**
- * POST /api/orchestrate — Full GTM campaign orchestrator.
+ * POST /api/orchestrate — Full GTM campaign orchestrator (non-streaming).
  *
- * Takes a ville + niche + count → queries Supabase leads → uploads to Instantly campaign.
- * Optionally creates a new campaign or uses an existing one.
- * Optionally assigns specific email accounts.
+ * Pipeline: Query Supabase → Validate + Dedup → Bulk Upload (500/batch) → Activate
  *
  * Body: {
  *   ville: string,                  // city filter (e.g. "Paris")
@@ -19,13 +18,10 @@ export const dynamic = "force-dynamic";
  *   emailAccounts?: string[],       // Instantly email account IDs to assign
  *   autoLaunch?: boolean,           // activate campaign after upload (default: true)
  * }
- *
- * Returns: { success, campaign, uploaded, errors, leads, campaignLaunched }
  */
 
 const INSTANTLY_API_BASE = "https://api.instantly.ai/api/v2";
 
-// Map verticale IDs to Google Maps category keywords for Supabase filtering
 const VERTICALE_CATEGORIES: Record<string, string[]> = {
   sante_dentaire: ["dentiste", "cabinet dentaire", "orthodontiste", "chirurgien-dentiste"],
   sante_medical: ["médecin", "cabinet médical", "centre médical", "médecin généraliste"],
@@ -48,6 +44,15 @@ interface InstantlyCampaignResponse {
   id: string;
   name: string;
   status: string;
+}
+
+interface InstantlyBulkResponse {
+  status?: string;
+  total_sent?: number;
+  leads_uploaded?: number;
+  already_in_campaign?: number;
+  invalid_email_count?: number;
+  duplicate_email_count?: number;
 }
 
 async function instantlyFetch(
@@ -118,7 +123,6 @@ export async function POST(request: Request) {
     let campaignId = body.campaignId || defaultCampaignId || "";
 
     if (body.campaignName && !body.campaignId) {
-      // Create a new campaign in Instantly
       const newCampaign = (await instantlyFetch("/campaigns", "POST", {
         name: body.campaignName,
       })) as InstantlyCampaignResponse;
@@ -139,7 +143,6 @@ export async function POST(request: Request) {
           account_ids: body.emailAccounts,
         });
       } catch (err) {
-        // Non-fatal: log but continue
         console.error("Failed to assign email accounts:", err instanceof Error ? err.message : err);
       }
     }
@@ -152,25 +155,21 @@ export async function POST(request: Request) {
       .neq("email", "")
       .limit(count);
 
-    // Filter by ville (city)
     if (ville) {
       query = query.ilike("city", `%${ville}%`);
     }
 
-    // Filter by niche (verticale categories or direct category match)
     if (niche) {
       const categories = VERTICALE_CATEGORIES[niche];
       if (categories && categories.length > 0) {
-        // Build OR filter for all category keywords
         const orFilter = categories.map((cat) => `category.ilike.%${cat}%`).join(",");
         query = query.or(orFilter);
       } else {
-        // Direct category match
         query = query.ilike("category", `%${niche}%`);
       }
     }
 
-    const { data: leads, error: dbError } = await query;
+    const { data: rawLeads, error: dbError } = await query;
 
     if (dbError) {
       return NextResponse.json(
@@ -179,79 +178,71 @@ export async function POST(request: Request) {
       );
     }
 
-    if (!leads || leads.length === 0) {
+    if (!rawLeads || rawLeads.length === 0) {
       return NextResponse.json({
         success: true,
         campaign: { id: campaignId },
         uploaded: 0,
         errors: 0,
         total: 0,
+        skippedInvalid: 0,
+        skippedDuplicate: 0,
         message: `No leads with email found for ville="${ville}" niche="${niche}"`,
         filters: { ville, niche, count },
       });
     }
 
-    // ─── Step 4: Upload leads to Instantly ───
-    let uploaded = 0;
-    let errors = 0;
+    // ─── Step 3b: Validate + Deduplicate ───
+    const { unique: leads, duplicateCount } = deduplicateLeads(rawLeads);
+    const skippedInvalid = rawLeads.length - leads.length - duplicateCount;
+
+    if (leads.length === 0) {
+      return NextResponse.json({
+        success: true,
+        campaign: { id: campaignId },
+        uploaded: 0,
+        errors: 0,
+        total: rawLeads.length,
+        skippedInvalid,
+        skippedDuplicate: duplicateCount,
+        message: "All leads filtered out (invalid emails or duplicates)",
+        filters: { ville, niche, count },
+      });
+    }
+
+    // ─── Step 4: Bulk Upload (500/batch) ───
+    const batches = buildBulkPayloads(leads, campaignId);
+    let totalUploaded = 0;
+    let totalErrors = 0;
+    let totalSkippedByInstantly = 0;
     const errorDetails: string[] = [];
 
-    for (const lead of leads) {
-      if (!lead.email || lead.email.trim() === "") continue;
-
-      const parts = (lead.name || "").trim().split(/\s+/);
-      const firstName = parts.length >= 2 ? parts[0] : (lead.name || "").trim().slice(0, 20) || "Contact";
-
-      const payload: Record<string, string> = {
-        email: lead.email.trim(),
-        first_name: firstName,
-        company_name: lead.name || "",
-        campaign: campaignId,
-      };
-
-      if (lead.website) payload.website = lead.website;
-      if (lead.city) payload.city = lead.city;
-      if (lead.phone) payload.phone = lead.phone;
-      if (lead.category) payload.lt_category = lead.category;
-
+    for (let i = 0; i < batches.length; i++) {
+      const batch = batches[i];
       try {
-        const resp = await fetch(`${INSTANTLY_API_BASE}/leads`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(payload),
-        });
+        const result = (await instantlyFetch("/leads", "POST", batch as unknown as Record<string, unknown>)) as InstantlyBulkResponse;
 
-        if (resp.ok) {
-          uploaded++;
-        } else {
-          errors++;
-          if (errorDetails.length < 5) {
-            const errText = await resp.text().catch(() => "unknown");
-            errorDetails.push(`${resp.status}: ${errText.slice(0, 100)}`);
-          }
-        }
+        totalUploaded += result.leads_uploaded ?? batch.leads.length;
+        totalSkippedByInstantly += (result.already_in_campaign ?? 0) + (result.duplicate_email_count ?? 0);
+        totalErrors += result.invalid_email_count ?? 0;
       } catch (err) {
-        errors++;
+        totalErrors += batch.leads.length;
         if (errorDetails.length < 5) {
           errorDetails.push(err instanceof Error ? err.message : "network error");
         }
       }
     }
 
-    // ─── Step 5: Auto-launch campaign if leads were uploaded ───
+    // ─── Step 5: Auto-launch campaign ───
     let campaignLaunched = false;
     let launchError: string | undefined;
-    const shouldLaunch = body.autoLaunch !== false; // default: true
+    const shouldLaunch = body.autoLaunch !== false;
 
-    if (shouldLaunch && uploaded > 0) {
+    if (shouldLaunch && totalUploaded > 0) {
       try {
         await instantlyFetch(`/campaigns/${campaignId}/activate`, "POST");
         campaignLaunched = true;
       } catch (err) {
-        // Non-fatal: campaign created + leads uploaded, just not activated
         launchError = err instanceof Error ? err.message : "Failed to activate campaign";
       }
     }
@@ -259,9 +250,13 @@ export async function POST(request: Request) {
     return NextResponse.json({
       success: true,
       campaign: { id: campaignId, name: body.campaignName || null },
-      uploaded,
-      errors,
-      total: leads.length,
+      uploaded: totalUploaded,
+      errors: totalErrors,
+      total: rawLeads.length,
+      validLeads: leads.length,
+      skippedInvalid,
+      skippedDuplicate: duplicateCount,
+      skippedByInstantly: totalSkippedByInstantly,
       campaignLaunched,
       launchError,
       filters: { ville, niche, count },

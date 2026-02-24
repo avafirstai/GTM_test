@@ -1,15 +1,18 @@
 import { supabase } from "@/lib/supabase";
+import { deduplicateLeads, buildBulkPayloads } from "@/lib/lead-utils";
 
 export const dynamic = "force-dynamic";
 
 /**
  * POST /api/orchestrate/stream — Streaming GTM orchestrator with SSE progress.
  *
- * Same logic as /api/orchestrate but streams real-time progress events:
- *   step: { step, message }           — current step being executed
- *   progress: { uploaded, errors, total } — lead upload progress
- *   done: { ...full result }          — final result
- *   error: { error }                  — fatal error
+ * Pipeline: Query Supabase → Validate + Dedup → Bulk Upload (500/batch) → Activate
+ *
+ * Events:
+ *   step: { step, message }                        — current step
+ *   progress: { uploaded, errors, total, percent }  — batch upload progress
+ *   done: { ...full result }                        — final result
+ *   error: { error }                                — fatal error
  */
 
 const INSTANTLY_API_BASE = "https://api.instantly.ai/api/v2";
@@ -36,6 +39,15 @@ interface InstantlyCampaignResponse {
   id: string;
   name: string;
   status: string;
+}
+
+interface InstantlyBulkResponse {
+  status?: string;
+  total_sent?: number;
+  leads_uploaded?: number;
+  already_in_campaign?: number;
+  invalid_email_count?: number;
+  duplicate_email_count?: number;
 }
 
 async function instantlyFetch(
@@ -173,7 +185,7 @@ export async function POST(request: Request) {
           }
         }
 
-        const { data: leads, error: dbError } = await query;
+        const { data: rawLeads, error: dbError } = await query;
 
         if (dbError) {
           send("error", { error: `Database error: ${dbError.message}` });
@@ -181,13 +193,15 @@ export async function POST(request: Request) {
           return;
         }
 
-        if (!leads || leads.length === 0) {
+        if (!rawLeads || rawLeads.length === 0) {
           send("done", {
             success: true,
             campaign: { id: campaignId },
             uploaded: 0,
             errors: 0,
             total: 0,
+            skippedInvalid: 0,
+            skippedDuplicate: 0,
             campaignLaunched: false,
             message: `Aucun lead avec email trouvé pour ville="${ville}" niche="${niche}"`,
             filters: { ville, niche, count },
@@ -196,80 +210,88 @@ export async function POST(request: Request) {
           return;
         }
 
-        send("step", { step: 3, message: `${leads.length} leads trouvés avec email` });
+        send("step", { step: 3, message: `${rawLeads.length} leads bruts trouvés` });
 
-        // ─── Step 4: Upload leads ───
-        send("step", { step: 4, message: `Upload de ${leads.length} leads vers Instantly...` });
+        // ─── Step 3b: Validate + Deduplicate ───
+        send("step", { step: 3, message: "Validation emails + déduplication..." });
 
-        let uploaded = 0;
-        let errors = 0;
-        const errorDetails: string[] = [];
+        const { unique: leads, duplicateCount } = deduplicateLeads(rawLeads);
+        const skippedInvalid = rawLeads.length - leads.length - duplicateCount;
 
-        for (let i = 0; i < leads.length; i++) {
-          const lead = leads[i];
-          if (!lead.email || lead.email.trim() === "") continue;
+        send("step", { step: 3, message: `${leads.length} leads valides (${skippedInvalid} invalides, ${duplicateCount} doublons supprimés)` });
 
-          const parts = (lead.name || "").trim().split(/\s+/);
-          const firstName = parts.length >= 2 ? parts[0] : (lead.name || "").trim().slice(0, 20) || "Contact";
-
-          const payload: Record<string, string> = {
-            email: lead.email.trim(),
-            first_name: firstName,
-            company_name: lead.name || "",
-            campaign: campaignId,
-          };
-
-          if (lead.website) payload.website = lead.website;
-          if (lead.city) payload.city = lead.city;
-          if (lead.phone) payload.phone = lead.phone;
-          if (lead.category) payload.lt_category = lead.category;
-
-          try {
-            const resp = await fetch(`${INSTANTLY_API_BASE}/leads`, {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${apiKey}`,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify(payload),
-            });
-
-            if (resp.ok) {
-              uploaded++;
-            } else {
-              errors++;
-              if (errorDetails.length < 5) {
-                const errText = await resp.text().catch(() => "unknown");
-                errorDetails.push(`${resp.status}: ${errText.slice(0, 100)}`);
-              }
-            }
-          } catch (err) {
-            errors++;
-            if (errorDetails.length < 5) {
-              errorDetails.push(err instanceof Error ? err.message : "network error");
-            }
-          }
-
-          // Send progress every 5 leads or on last one
-          if ((i + 1) % 5 === 0 || i === leads.length - 1) {
-            send("progress", {
-              uploaded,
-              errors,
-              current: i + 1,
-              total: leads.length,
-              percent: Math.round(((i + 1) / leads.length) * 100),
-            });
-          }
+        if (leads.length === 0) {
+          send("done", {
+            success: true,
+            campaign: { id: campaignId },
+            uploaded: 0,
+            errors: 0,
+            total: rawLeads.length,
+            skippedInvalid,
+            skippedDuplicate: duplicateCount,
+            campaignLaunched: false,
+            message: "Tous les leads ont été filtrés (emails invalides ou doublons)",
+            filters: { ville, niche, count },
+          });
+          controller.close();
+          return;
         }
 
-        send("step", { step: 4, message: `Upload terminé: ${uploaded} OK, ${errors} erreurs` });
+        // ─── Step 4: Bulk Upload (500/batch) ───
+        const batches = buildBulkPayloads(leads, campaignId);
+        send("step", { step: 4, message: `Upload de ${leads.length} leads en ${batches.length} batch(es) de max 500...` });
+
+        let totalUploaded = 0;
+        let totalErrors = 0;
+        let totalSkippedByInstantly = 0;
+        const errorDetails: string[] = [];
+
+        for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+          const batch = batches[batchIndex];
+          const batchNum = batchIndex + 1;
+
+          send("step", { step: 4, message: `Batch ${batchNum}/${batches.length}: ${batch.leads.length} leads...` });
+
+          try {
+            const result = (await instantlyFetch("/leads", "POST", batch as unknown as Record<string, unknown>)) as InstantlyBulkResponse;
+
+            const batchUploaded = result.leads_uploaded ?? batch.leads.length;
+            const batchSkipped = (result.already_in_campaign ?? 0) + (result.duplicate_email_count ?? 0);
+            const batchInvalid = result.invalid_email_count ?? 0;
+
+            totalUploaded += batchUploaded;
+            totalSkippedByInstantly += batchSkipped;
+            totalErrors += batchInvalid;
+
+            send("step", { step: 4, message: `Batch ${batchNum}: ${batchUploaded} uploadés, ${batchSkipped} déjà présents, ${batchInvalid} invalides` });
+          } catch (err) {
+            totalErrors += batch.leads.length;
+            const errMsg = err instanceof Error ? err.message : "network error";
+            if (errorDetails.length < 5) {
+              errorDetails.push(`Batch ${batchNum}: ${errMsg}`);
+            }
+            send("step", { step: 4, message: `Batch ${batchNum}: ERREUR — ${errMsg}` });
+          }
+
+          // Progress after each batch
+          const processedLeads = Math.min((batchIndex + 1) * 500, leads.length);
+          send("progress", {
+            uploaded: totalUploaded,
+            errors: totalErrors,
+            current: processedLeads,
+            total: leads.length,
+            percent: Math.round((processedLeads / leads.length) * 100),
+          });
+        }
+
+        send("step", { step: 4, message: `Upload terminé: ${totalUploaded} OK, ${totalErrors} erreurs, ${totalSkippedByInstantly} déjà dans Instantly` });
 
         // ─── Step 5: Auto-launch campaign ───
         let campaignLaunched = false;
         let launchError: string | undefined;
         const shouldLaunch = body.autoLaunch !== false;
 
-        if (shouldLaunch && uploaded > 0) {
+        if (shouldLaunch && totalUploaded > 0) {
           send("step", { step: 5, message: "Activation de la campagne..." });
           try {
             await instantlyFetch(`/campaigns/${campaignId}/activate`, "POST");
@@ -279,7 +301,7 @@ export async function POST(request: Request) {
             launchError = err instanceof Error ? err.message : "Failed to activate";
             send("step", { step: 5, message: `Avertissement: ${launchError}` });
           }
-        } else if (uploaded === 0) {
+        } else if (totalUploaded === 0) {
           send("step", { step: 5, message: "Aucun lead uploadé — campagne non activée" });
         }
 
@@ -287,9 +309,13 @@ export async function POST(request: Request) {
         send("done", {
           success: true,
           campaign: { id: campaignId, name: body.campaignName || null },
-          uploaded,
-          errors,
-          total: leads.length,
+          uploaded: totalUploaded,
+          errors: totalErrors,
+          total: rawLeads.length,
+          validLeads: leads.length,
+          skippedInvalid,
+          skippedDuplicate: duplicateCount,
+          skippedByInstantly: totalSkippedByInstantly,
           campaignLaunched,
           launchError,
           filters: { ville, niche, count },

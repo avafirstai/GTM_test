@@ -35,6 +35,10 @@ interface OrchestrationResult {
   uploaded: number;
   errors: number;
   total: number;
+  validLeads?: number;
+  skippedInvalid?: number;
+  skippedDuplicate?: number;
+  skippedByInstantly?: number;
   campaignLaunched: boolean;
   launchError?: string;
   filters: { ville: string; niche: string; count: number };
@@ -350,17 +354,46 @@ export default function LaunchPage() {
 
           {results && (
             <>
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
-                <ResultBox label="Leads trouv\u00E9s" value={results.total.toLocaleString()} color="#6366f1" />
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                <ResultBox label="Leads bruts" value={results.total.toLocaleString()} color="#6366f1" />
+                <ResultBox label="Valides" value={(results.validLeads ?? results.total).toLocaleString()} color="#818cf8" />
                 <ResultBox label="Upload\u00E9s" value={results.uploaded.toLocaleString()} color="#22c55e" />
-                <ResultBox label="Erreurs" value={results.errors.toLocaleString()} color={results.errors > 0 ? "#ef4444" : "#22c55e"} />
-                <ResultBox label="Campagne" value={results.campaign.name || results.campaign.id.slice(0, 8) + "..."} color="#818cf8" />
                 <ResultBox
                   label="Emails"
                   value={results.campaignLaunched ? "Envoi actif" : "Non lanc\u00E9"}
                   color={results.campaignLaunched ? "#22c55e" : "#f59e0b"}
                 />
               </div>
+
+              {/* Dedup/validation breakdown */}
+              {((results.skippedInvalid ?? 0) > 0 || (results.skippedDuplicate ?? 0) > 0 || (results.skippedByInstantly ?? 0) > 0 || results.errors > 0) && (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+                  {(results.skippedInvalid ?? 0) > 0 && (
+                    <div className="text-center p-2 rounded-lg" style={{ background: "var(--background)" }}>
+                      <p className="text-sm font-bold" style={{ color: "#f59e0b" }}>{results.skippedInvalid}</p>
+                      <p className="text-[10px]" style={{ color: "var(--muted)" }}>Emails invalides</p>
+                    </div>
+                  )}
+                  {(results.skippedDuplicate ?? 0) > 0 && (
+                    <div className="text-center p-2 rounded-lg" style={{ background: "var(--background)" }}>
+                      <p className="text-sm font-bold" style={{ color: "#f59e0b" }}>{results.skippedDuplicate}</p>
+                      <p className="text-[10px]" style={{ color: "var(--muted)" }}>Doublons supprim.</p>
+                    </div>
+                  )}
+                  {(results.skippedByInstantly ?? 0) > 0 && (
+                    <div className="text-center p-2 rounded-lg" style={{ background: "var(--background)" }}>
+                      <p className="text-sm font-bold" style={{ color: "#818cf8" }}>{results.skippedByInstantly}</p>
+                      <p className="text-[10px]" style={{ color: "var(--muted)" }}>D\u00E9j\u00E0 dans Instantly</p>
+                    </div>
+                  )}
+                  {results.errors > 0 && (
+                    <div className="text-center p-2 rounded-lg" style={{ background: "var(--background)" }}>
+                      <p className="text-sm font-bold" style={{ color: "#ef4444" }}>{results.errors}</p>
+                      <p className="text-[10px]" style={{ color: "var(--muted)" }}>Erreurs upload</p>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {results.launchError && (
                 <div className="mb-4 p-3 rounded-lg" style={{ background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.2)" }}>
