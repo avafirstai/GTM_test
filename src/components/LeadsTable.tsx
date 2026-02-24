@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useMemo, useRef, useEffect } from "react";
-import { ChevronDown, X } from "lucide-react";
+import { useState, useMemo, useRef, useEffect, useCallback } from "react";
+import { ChevronDown, X, Loader2 } from "lucide-react";
 import type { Lead, SortField, SortDirection, LeadFilters } from "@/lib/leads-data";
 
 interface LeadsTableProps {
@@ -174,6 +174,40 @@ export function LeadsTable({ leads, initialFilters }: LeadsTableProps) {
   const [sortDir, setSortDir] = useState<SortDirection>("desc");
   const [selectedLeads, setSelectedLeads] = useState<Set<string>>(new Set());
   const [expandedLead, setExpandedLead] = useState<string | null>(null);
+  const [enrichingLeads, setEnrichingLeads] = useState<Set<string>>(new Set());
+  const [enrichResults, setEnrichResults] = useState<Record<string, { email?: string; error?: string }>>({});
+  const [bulkAction, setBulkAction] = useState<"idle" | "exporting" | "sending" | "enriching">("idle");
+  const [bulkMessage, setBulkMessage] = useState<string>("");
+
+  // --- Action handlers ---
+
+  const handleEnrichLead = useCallback(async (lead: Lead) => {
+    if (!lead.site_web || lead.email) return;
+    setEnrichingLeads((prev) => new Set([...prev, lead.id]));
+    try {
+      const res = await fetch("/api/enrich", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ leadIds: [lead.id], technique: "website_scraping", limit: 1 }),
+      });
+      const data = await res.json();
+      if (data.results && data.results.length > 0) {
+        const result = data.results[0];
+        setEnrichResults((prev) => ({
+          ...prev,
+          [lead.id]: result.email ? { email: result.email } : { error: result.error || "Aucun email trouve" },
+        }));
+      }
+    } catch {
+      setEnrichResults((prev) => ({ ...prev, [lead.id]: { error: "Erreur reseau" } }));
+    } finally {
+      setEnrichingLeads((prev) => {
+        const next = new Set(prev);
+        next.delete(lead.id);
+        return next;
+      });
+    }
+  }, []);
 
   // Derive unique filter options
   const villes = useMemo(() => [...new Set(leads.map((l) => l.ville).filter(Boolean))].sort(), [leads]);
@@ -214,6 +248,108 @@ export function LeadsTable({ leads, initialFilters }: LeadsTableProps) {
 
     return result;
   }, [leads, filters, sortField, sortDir]);
+
+  const handleExportCSV = useCallback(() => {
+    const leadsToExport = filteredLeads.filter((l) => selectedLeads.has(l.id));
+    if (leadsToExport.length === 0) return;
+    setBulkAction("exporting");
+
+    const headers = ["Entreprise", "Ville", "Verticale", "Email", "Telephone", "Site Web", "Score", "Note Google", "Avis Google", "Adresse"];
+    const rows = leadsToExport.map((l) => [
+      l.nom_entreprise, l.ville, l.verticale, l.email, l.telephone,
+      l.site_web, String(l.score), String(l.note_google), String(l.nb_avis_google), l.adresse,
+    ]);
+
+    const csvContent = [
+      headers.join(","),
+      ...rows.map((row) => row.map((cell) => `"${(cell || "").replace(/"/g, '""')}"`).join(",")),
+    ].join("\n");
+
+    const blob = new Blob(["\ufeff" + csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `leads-export-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+
+    setBulkMessage(`${leadsToExport.length} leads exportes en CSV`);
+    setBulkAction("idle");
+    setTimeout(() => setBulkMessage(""), 3000);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedLeads, filteredLeads]);
+
+  const handleSendToInstantly = useCallback(async () => {
+    const leadsToSend = filteredLeads.filter((l) => selectedLeads.has(l.id) && l.email);
+    if (leadsToSend.length === 0) {
+      setBulkMessage("Aucun lead avec email dans la selection");
+      setTimeout(() => setBulkMessage(""), 3000);
+      return;
+    }
+    setBulkAction("sending");
+    try {
+      const res = await fetch("/api/orchestrate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ville: "",
+          niche: "",
+          count: leadsToSend.length,
+          autoLaunch: false,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setBulkMessage(`${data.uploaded} leads envoyes a Instantly`);
+      } else {
+        setBulkMessage(data.error || "Erreur lors de l'envoi");
+      }
+    } catch {
+      setBulkMessage("Erreur reseau");
+    } finally {
+      setBulkAction("idle");
+      setTimeout(() => setBulkMessage(""), 4000);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedLeads, filteredLeads]);
+
+  const handleBulkEnrich = useCallback(async () => {
+    const leadsToEnrich = filteredLeads.filter((l) => selectedLeads.has(l.id) && !l.email && l.site_web);
+    if (leadsToEnrich.length === 0) {
+      setBulkMessage("Aucun lead sans email avec site web dans la selection");
+      setTimeout(() => setBulkMessage(""), 3000);
+      return;
+    }
+    setBulkAction("enriching");
+    try {
+      const res = await fetch("/api/enrich", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          leadIds: leadsToEnrich.map((l) => l.id),
+          technique: "website_scraping",
+          limit: leadsToEnrich.length,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setBulkMessage(`${data.found} emails trouves sur ${data.processed} leads`);
+        for (const r of data.results || []) {
+          if (r.email) {
+            setEnrichResults((prev) => ({ ...prev, [r.leadId]: { email: r.email } }));
+          }
+        }
+      } else {
+        setBulkMessage("Erreur enrichissement");
+      }
+    } catch {
+      setBulkMessage("Erreur reseau");
+    } finally {
+      setBulkAction("idle");
+      setTimeout(() => setBulkMessage(""), 5000);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedLeads, filteredLeads]);
 
   const toggleSort = (field: SortField) => {
     if (sortField === field) {
@@ -367,17 +503,38 @@ export function LeadsTable({ leads, initialFilters }: LeadsTableProps) {
             {selectedLeads.size} s\u00e9lectionn\u00e9{selectedLeads.size > 1 ? "s" : ""}
           </span>
           <button
-            className="text-xs px-3 py-1 rounded-md font-medium"
+            className="text-xs px-3 py-1 rounded-md font-medium transition-opacity disabled:opacity-50"
             style={{ background: "var(--accent)", color: "white" }}
+            onClick={handleExportCSV}
+            disabled={bulkAction !== "idle"}
           >
-            Exporter CSV
+            {bulkAction === "exporting" ? "Export..." : "Exporter CSV"}
           </button>
           <button
-            className="text-xs px-3 py-1 rounded-md font-medium"
+            className="text-xs px-3 py-1 rounded-md font-medium transition-opacity disabled:opacity-50"
             style={{ background: "var(--green-subtle)", color: "var(--green)" }}
+            onClick={handleSendToInstantly}
+            disabled={bulkAction !== "idle"}
           >
-            Envoyer \u00e0 Instantly
+            {bulkAction === "sending" ? "Envoi..." : "Envoyer \u00e0 Instantly"}
           </button>
+          <button
+            className="text-xs px-3 py-1 rounded-md font-medium transition-opacity disabled:opacity-50"
+            style={{ background: "var(--amber-subtle)", color: "var(--amber)" }}
+            onClick={handleBulkEnrich}
+            disabled={bulkAction !== "idle"}
+          >
+            {bulkAction === "enriching" ? "Enrichissement..." : "Enrichir s\u00e9lection"}
+          </button>
+        </div>
+      )}
+      {/* Bulk action feedback */}
+      {bulkMessage && (
+        <div
+          className="px-4 py-2 rounded-lg mb-3 text-sm font-medium"
+          style={{ background: "var(--green-subtle)", color: "var(--green)", border: "1px solid rgba(34,197,94,0.2)" }}
+        >
+          {bulkMessage}
         </div>
       )}
 
@@ -580,58 +737,77 @@ export function LeadsTable({ leads, initialFilters }: LeadsTableProps) {
                           >
                             &ldquo;{lead.pitch_angle}&rdquo;
                           </p>
-                          <div className="mt-3 flex gap-2">
-                            <button
-                              className="text-xs px-3 py-1.5 rounded-md font-medium"
-                              style={{ background: "var(--accent)", color: "white" }}
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              Enrichir decideurs
-                            </button>
-                            <button
-                              className="text-xs px-3 py-1.5 rounded-md font-medium"
-                              style={{ background: "var(--green-subtle)", color: "var(--green)" }}
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              Voir dans Instantly
-                            </button>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {!lead.email && lead.site_web && (
+                              <button
+                                className="text-xs px-3 py-1.5 rounded-md font-medium transition-opacity disabled:opacity-50"
+                                style={{ background: "var(--accent)", color: "white" }}
+                                onClick={(e) => { e.stopPropagation(); handleEnrichLead(lead); }}
+                                disabled={enrichingLeads.has(lead.id)}
+                              >
+                                {enrichingLeads.has(lead.id) ? "Enrichissement..." : "Enrichir email"}
+                              </button>
+                            )}
+                            {lead.email && (
+                              <button
+                                className="text-xs px-3 py-1.5 rounded-md font-medium"
+                                style={{ background: "var(--green-subtle)", color: "var(--green)" }}
+                                onClick={(e) => { e.stopPropagation(); window.open(`mailto:${lead.email}`, "_blank"); }}
+                              >
+                                Envoyer email
+                              </button>
+                            )}
+                            {lead.site_web && (
+                              <button
+                                className="text-xs px-3 py-1.5 rounded-md font-medium"
+                                style={{ background: "var(--bg)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}
+                                onClick={(e) => { e.stopPropagation(); window.open(lead.site_web.startsWith("http") ? lead.site_web : `https://${lead.site_web}`, "_blank"); }}
+                              >
+                                Voir site web
+                              </button>
+                            )}
+                            {enrichResults[lead.id] && (
+                              <span className="text-xs py-1.5" style={{ color: enrichResults[lead.id].email ? "var(--green)" : "var(--red)" }}>
+                                {enrichResults[lead.id].email ? `\u2713 ${enrichResults[lead.id].email}` : enrichResults[lead.id].error}
+                              </span>
+                            )}
                           </div>
                         </div>
-                        {/* Decision Makers */}
+                        {/* Enrichment Status */}
                         <div>
                           <h4 className="text-xs font-semibold mb-2 uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
-                            Decideurs ({lead.decision_makers.length})
+                            Statut enrichissement
                           </h4>
-                          {lead.decision_makers.length > 0 ? (
-                            <div className="space-y-2">
-                              {lead.decision_makers.map((dm, i) => (
-                                <div
-                                  key={i}
-                                  className="p-2 rounded-lg text-xs"
-                                  style={{ background: "var(--bg)" }}
-                                >
-                                  <p className="font-medium">{dm.name}</p>
-                                  <p style={{ color: "var(--text-muted)" }}>{dm.title}</p>
-                                  <p style={{ color: "var(--green)" }}>{dm.email}</p>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
+                          <div className="space-y-2">
                             <div
-                              className="p-4 rounded-lg text-center"
-                              style={{
-                                background: "var(--bg)",
-                                border: "1px dashed var(--border)",
-                              }}
+                              className="p-3 rounded-lg text-xs"
+                              style={{ background: "var(--bg)" }}
                             >
-                              <p className="text-xs" style={{ color: "var(--text-muted)" }}>
-                                Pas encore enrichi
-                              </p>
-                              <p className="text-[10px] mt-1" style={{ color: "var(--accent-hover)" }}>
-                                Cliquer &laquo;Enrichir decideurs&raquo; pour lancer
-                              </p>
+                              <div className="flex items-center justify-between mb-1">
+                                <span style={{ color: "var(--text-muted)" }}>Email</span>
+                                <span style={{ color: lead.email || enrichResults[lead.id]?.email ? "var(--green)" : "var(--red)" }}>
+                                  {lead.email || enrichResults[lead.id]?.email ? "\u2713 Trouve" : "\u2717 Manquant"}
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between mb-1">
+                                <span style={{ color: "var(--text-muted)" }}>Site web</span>
+                                <span style={{ color: lead.site_web ? "var(--green)" : "var(--text-muted)" }}>
+                                  {lead.site_web ? "\u2713 Disponible" : "\u2014 Absent"}
+                                </span>
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span style={{ color: "var(--text-muted)" }}>Telephone</span>
+                                <span style={{ color: lead.telephone ? "var(--green)" : "var(--text-muted)" }}>
+                                  {lead.telephone ? "\u2713 Disponible" : "\u2014 Absent"}
+                                </span>
+                              </div>
                             </div>
-                          )}
+                            {!lead.email && !enrichResults[lead.id]?.email && lead.site_web && (
+                              <p className="text-[10px] text-center" style={{ color: "var(--accent-hover)" }}>
+                                Cliquez &laquo;Enrichir email&raquo; pour trouver l&apos;email via le site web
+                              </p>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </td>

@@ -26,7 +26,7 @@ export async function GET() {
 
   if (!apiKey) {
     return NextResponse.json(
-      { connected: false, accounts: [], error: "INSTANTLY_API_KEY not configured" },
+      { connected: false, accounts: [], error: "not_configured" },
     );
   }
 
