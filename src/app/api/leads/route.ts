@@ -18,7 +18,7 @@ export async function GET(request: Request) {
   let query = supabase
     .from("gtm_leads")
     .select(
-      "id, name, city, phone, website, email, category, rating, reviews, score, address, apify_run, created_at",
+      "id, name, city, phone, website, email, category, rating, reviews, score, address, apify_run, created_at, siret, dirigeant, dirigeant_linkedin, mx_provider, has_mx, enrichment_source, enrichment_confidence, enriched_at",
       { count: "exact" }
     );
 
@@ -44,7 +44,7 @@ export async function GET(request: Request) {
   }
 
   // Sort — only allow safe column names
-  const allowedSorts = ["score", "name", "city", "rating", "reviews", "created_at"];
+  const allowedSorts = ["score", "name", "city", "rating", "reviews", "created_at", "enrichment_confidence", "enriched_at"];
   const safeSortBy = allowedSorts.includes(sortBy) ? sortBy : "score";
   const ascending = sortDir === "asc";
 

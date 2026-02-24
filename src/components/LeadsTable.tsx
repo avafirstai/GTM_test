@@ -1,12 +1,13 @@
 "use client";
 
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
-import { ChevronDown, X, Loader2 } from "lucide-react";
-import type { Lead, SortField, SortDirection, LeadFilters } from "@/lib/leads-data";
+import { ChevronDown, X, Loader2, UserSearch, Linkedin, Mail as MailIcon, Shield } from "lucide-react";
+import type { Lead, DecisionMaker, SortField, SortDirection, LeadFilters } from "@/lib/leads-data";
 
 interface LeadsTableProps {
   leads: Lead[];
   initialFilters?: Partial<LeadFilters>;
+  campaignId?: string;
 }
 
 const PIPELINE_COLORS: Record<string, { bg: string; text: string; label: string }> = {
@@ -158,7 +159,7 @@ function PipelineBadge({ status }: { status: string }) {
 }
 
 /* ========== LeadsTable ========== */
-export function LeadsTable({ leads, initialFilters }: LeadsTableProps) {
+export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProps) {
   const [filters, setFilters] = useState<LeadFilters>({
     search: "",
     ville: [],
@@ -178,7 +179,11 @@ export function LeadsTable({ leads, initialFilters }: LeadsTableProps) {
   const [enrichResults, setEnrichResults] = useState<Record<string, { email?: string; error?: string }>>({});
   const [bulkAction, setBulkAction] = useState<"idle" | "exporting" | "sending" | "enriching">("idle");
   const [bulkMessage, setBulkMessage] = useState<string>("");
+  const [bulkMessageType, setBulkMessageType] = useState<"success" | "error">("success");
   const [sendingLeadId, setSendingLeadId] = useState<string | null>(null);
+  const [decisionMakers, setDecisionMakers] = useState<Record<string, DecisionMaker[]>>({});
+  const [dmLoading, setDmLoading] = useState<Set<string>>(new Set());
+  const [dmErrors, setDmErrors] = useState<Record<string, string>>({});
 
   // --- Action handlers ---
 
@@ -210,14 +215,46 @@ export function LeadsTable({ leads, initialFilters }: LeadsTableProps) {
     }
   }, []);
 
+  const handleFindDecisionMakers = useCallback(async (lead: Lead) => {
+    if (!lead.site_web) return;
+    setDmLoading((prev) => new Set([...prev, lead.id]));
+    setDmErrors((prev) => { const n = { ...prev }; delete n[lead.id]; return n; });
+    try {
+      const res = await fetch("/api/enrich/people", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ domain: lead.site_web, leadId: lead.id, limit: 5 }),
+      });
+      const data = await res.json();
+      if (data.success && data.people && data.people.length > 0) {
+        setDecisionMakers((prev) => ({ ...prev, [lead.id]: data.people }));
+      } else if (data.success && (!data.people || data.people.length === 0)) {
+        setDmErrors((prev) => ({ ...prev, [lead.id]: "Aucun decideur trouve pour ce domaine" }));
+      } else {
+        setDmErrors((prev) => ({ ...prev, [lead.id]: data.error || "Erreur Apollo" }));
+      }
+    } catch {
+      setDmErrors((prev) => ({ ...prev, [lead.id]: "Erreur reseau" }));
+    } finally {
+      setDmLoading((prev) => { const n = new Set(prev); n.delete(lead.id); return n; });
+    }
+  }, []);
+
   const handleSendSingleToInstantly = useCallback(async (lead: Lead) => {
     if (!lead.email) return;
+    if (!campaignId) {
+      setBulkMessage("Aucune campagne active — configurez une campagne d'abord");
+      setBulkMessageType("error");
+      setTimeout(() => setBulkMessage(""), 4000);
+      return;
+    }
     setSendingLeadId(lead.id);
     try {
       const res = await fetch("/api/leads/upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          campaignId,
           leads: [{
             email: lead.email,
             name: lead.nom_entreprise,
@@ -231,16 +268,19 @@ export function LeadsTable({ leads, initialFilters }: LeadsTableProps) {
       const data = await res.json();
       if (data.success && data.uploaded > 0) {
         setBulkMessage(`${lead.nom_entreprise} ajoute a Instantly`);
+        setBulkMessageType("success");
       } else {
         setBulkMessage(data.error || "Erreur lors de l'envoi");
+        setBulkMessageType("error");
       }
     } catch {
       setBulkMessage("Erreur reseau");
+      setBulkMessageType("error");
     } finally {
       setSendingLeadId(null);
       setTimeout(() => setBulkMessage(""), 3000);
     }
-  }, []);
+  }, [campaignId]);
 
   // Derive unique filter options
   const villes = useMemo(() => [...new Set(leads.map((l) => l.ville).filter(Boolean))].sort(), [leads]);
@@ -307,15 +347,23 @@ export function LeadsTable({ leads, initialFilters }: LeadsTableProps) {
     URL.revokeObjectURL(url);
 
     setBulkMessage(`${leadsToExport.length} leads exportes en CSV`);
+    setBulkMessageType("success");
     setBulkAction("idle");
     setTimeout(() => setBulkMessage(""), 3000);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedLeads, filteredLeads]);
 
   const handleSendToInstantly = useCallback(async () => {
+    if (!campaignId) {
+      setBulkMessage("Aucune campagne active — configurez une campagne d'abord");
+      setBulkMessageType("error");
+      setTimeout(() => setBulkMessage(""), 4000);
+      return;
+    }
     const leadsToSend = filteredLeads.filter((l) => selectedLeads.has(l.id) && l.email);
     if (leadsToSend.length === 0) {
       setBulkMessage("Aucun lead avec email dans la selection");
+      setBulkMessageType("error");
       setTimeout(() => setBulkMessage(""), 3000);
       return;
     }
@@ -325,6 +373,7 @@ export function LeadsTable({ leads, initialFilters }: LeadsTableProps) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          campaignId,
           leads: leadsToSend.map((l) => ({
             email: l.email,
             name: l.nom_entreprise,
@@ -338,22 +387,26 @@ export function LeadsTable({ leads, initialFilters }: LeadsTableProps) {
       const data = await res.json();
       if (data.success) {
         setBulkMessage(`${data.uploaded} lead${data.uploaded !== 1 ? "s" : ""} envoye${data.uploaded !== 1 ? "s" : ""} a Instantly`);
+        setBulkMessageType("success");
       } else {
         setBulkMessage(data.error || "Erreur lors de l'envoi");
+        setBulkMessageType("error");
       }
     } catch {
       setBulkMessage("Erreur reseau");
+      setBulkMessageType("error");
     } finally {
       setBulkAction("idle");
       setTimeout(() => setBulkMessage(""), 4000);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedLeads, filteredLeads]);
+  }, [selectedLeads, filteredLeads, campaignId]);
 
   const handleBulkEnrich = useCallback(async () => {
     const leadsToEnrich = filteredLeads.filter((l) => selectedLeads.has(l.id) && !l.email && l.site_web);
     if (leadsToEnrich.length === 0) {
       setBulkMessage("Aucun lead sans email avec site web dans la selection");
+      setBulkMessageType("error");
       setTimeout(() => setBulkMessage(""), 3000);
       return;
     }
@@ -371,6 +424,7 @@ export function LeadsTable({ leads, initialFilters }: LeadsTableProps) {
       const data = await res.json();
       if (data.success) {
         setBulkMessage(`${data.found} emails trouves sur ${data.processed} leads`);
+        setBulkMessageType("success");
         for (const r of data.results || []) {
           if (r.email) {
             setEnrichResults((prev) => ({ ...prev, [r.leadId]: { email: r.email } }));
@@ -378,9 +432,11 @@ export function LeadsTable({ leads, initialFilters }: LeadsTableProps) {
         }
       } else {
         setBulkMessage("Erreur enrichissement");
+        setBulkMessageType("error");
       }
     } catch {
       setBulkMessage("Erreur reseau");
+      setBulkMessageType("error");
     } finally {
       setBulkAction("idle");
       setTimeout(() => setBulkMessage(""), 5000);
@@ -569,7 +625,11 @@ export function LeadsTable({ leads, initialFilters }: LeadsTableProps) {
       {bulkMessage && (
         <div
           className="px-4 py-2 rounded-lg mb-3 text-sm font-medium"
-          style={{ background: "var(--green-subtle)", color: "var(--green)", border: "1px solid rgba(34,197,94,0.2)" }}
+          style={{
+            background: bulkMessageType === "error" ? "rgba(239,68,68,0.1)" : "var(--green-subtle)",
+            color: bulkMessageType === "error" ? "var(--red)" : "var(--green)",
+            border: bulkMessageType === "error" ? "1px solid rgba(239,68,68,0.2)" : "1px solid rgba(34,197,94,0.2)",
+          }}
         >
           {bulkMessage}
         </div>
@@ -822,40 +882,135 @@ export function LeadsTable({ leads, initialFilters }: LeadsTableProps) {
                             )}
                           </div>
                         </div>
-                        {/* Enrichment Status */}
+                        {/* Decideurs + Enrichment Status */}
                         <div>
                           <h4 className="text-xs font-semibold mb-2 uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
-                            Statut enrichissement
+                            Decideurs
                           </h4>
-                          <div className="space-y-2">
-                            <div
-                              className="p-3 rounded-lg text-xs"
-                              style={{ background: "var(--bg)" }}
-                            >
-                              <div className="flex items-center justify-between mb-1">
-                                <span style={{ color: "var(--text-muted)" }}>Email</span>
-                                <span style={{ color: lead.email || enrichResults[lead.id]?.email ? "var(--green)" : "var(--red)" }}>
-                                  {lead.email || enrichResults[lead.id]?.email ? "\u2713 Trouve" : "\u2717 Manquant"}
-                                </span>
-                              </div>
-                              <div className="flex items-center justify-between mb-1">
-                                <span style={{ color: "var(--text-muted)" }}>Site web</span>
-                                <span style={{ color: lead.site_web ? "var(--green)" : "var(--text-muted)" }}>
-                                  {lead.site_web ? "\u2713 Disponible" : "\u2014 Absent"}
-                                </span>
-                              </div>
-                              <div className="flex items-center justify-between">
-                                <span style={{ color: "var(--text-muted)" }}>Telephone</span>
-                                <span style={{ color: lead.telephone ? "var(--green)" : "var(--text-muted)" }}>
-                                  {lead.telephone ? "\u2713 Disponible" : "\u2014 Absent"}
-                                </span>
-                              </div>
+
+                          {/* Decision makers list */}
+                          {decisionMakers[lead.id] && decisionMakers[lead.id].length > 0 ? (
+                            <div className="space-y-1.5 mb-3">
+                              {decisionMakers[lead.id].map((dm, idx) => (
+                                <div
+                                  key={`${lead.id}-dm-${idx}`}
+                                  className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs"
+                                  style={{ background: "var(--bg)" }}
+                                >
+                                  {/* Avatar */}
+                                  <div
+                                    className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0"
+                                    style={{
+                                      background: "var(--accent-subtle)",
+                                      color: "var(--accent-hover)",
+                                    }}
+                                  >
+                                    {dm.name.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase()}
+                                  </div>
+                                  <div className="flex-1 min-w-0">
+                                    <p className="font-medium text-xs truncate">{dm.name}</p>
+                                    {dm.title && (
+                                      <p className="text-[10px] truncate" style={{ color: "var(--text-muted)" }}>
+                                        {dm.title}
+                                      </p>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center gap-1.5 shrink-0">
+                                    {dm.email && (
+                                      <a
+                                        href={`mailto:${dm.email}`}
+                                        onClick={(e) => e.stopPropagation()}
+                                        title={dm.email}
+                                        className="p-1 rounded transition-colors"
+                                        style={{ color: "var(--green)" }}
+                                      >
+                                        <MailIcon size={12} />
+                                      </a>
+                                    )}
+                                    {dm.linkedin_url && (
+                                      <a
+                                        href={dm.linkedin_url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="p-1 rounded transition-colors"
+                                        style={{ color: "#0077b5" }}
+                                      >
+                                        <Linkedin size={12} />
+                                      </a>
+                                    )}
+                                    {/* Confidence badge */}
+                                    <span
+                                      className="inline-flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded-full"
+                                      style={{
+                                        background: dm.confidence >= 70
+                                          ? "rgba(34,197,94,0.15)"
+                                          : dm.confidence >= 40
+                                            ? "rgba(245,158,11,0.15)"
+                                            : "rgba(115,115,115,0.15)",
+                                        color: dm.confidence >= 70
+                                          ? "#22c55e"
+                                          : dm.confidence >= 40
+                                            ? "#f59e0b"
+                                            : "#737373",
+                                      }}
+                                    >
+                                      <Shield size={8} />
+                                      {dm.confidence}%
+                                    </span>
+                                  </div>
+                                </div>
+                              ))}
                             </div>
-                            {!lead.email && !enrichResults[lead.id]?.email && lead.site_web && (
-                              <p className="text-[10px] text-center" style={{ color: "var(--accent-hover)" }}>
-                                Cliquez &laquo;Enrichir email&raquo; pour trouver l&apos;email via le site web
-                              </p>
-                            )}
+                          ) : dmErrors[lead.id] ? (
+                            <div
+                              className="px-3 py-2 rounded-lg text-[11px] mb-3"
+                              style={{ background: "rgba(245,158,11,0.08)", color: "var(--amber)" }}
+                            >
+                              {dmErrors[lead.id]}
+                            </div>
+                          ) : null}
+
+                          {/* Find decision-makers button */}
+                          {!decisionMakers[lead.id] && lead.site_web && (
+                            <button
+                              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md font-medium transition-opacity disabled:opacity-50 mb-3"
+                              style={{ background: "var(--accent-subtle)", color: "var(--accent-hover)" }}
+                              onClick={(e) => { e.stopPropagation(); handleFindDecisionMakers(lead); }}
+                              disabled={dmLoading.has(lead.id)}
+                            >
+                              {dmLoading.has(lead.id) ? (
+                                <Loader2 size={12} className="animate-spin" />
+                              ) : (
+                                <UserSearch size={12} />
+                              )}
+                              {dmLoading.has(lead.id) ? "Recherche Apollo..." : "Trouver les decideurs"}
+                            </button>
+                          )}
+
+                          {/* Enrichment mini-status */}
+                          <div
+                            className="p-3 rounded-lg text-xs"
+                            style={{ background: "var(--bg)" }}
+                          >
+                            <div className="flex items-center justify-between mb-1">
+                              <span style={{ color: "var(--text-muted)" }}>Email</span>
+                              <span style={{ color: lead.email || enrichResults[lead.id]?.email ? "var(--green)" : "var(--red)" }}>
+                                {lead.email || enrichResults[lead.id]?.email ? "\u2713 Trouve" : "\u2717 Manquant"}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between mb-1">
+                              <span style={{ color: "var(--text-muted)" }}>Site web</span>
+                              <span style={{ color: lead.site_web ? "var(--green)" : "var(--text-muted)" }}>
+                                {lead.site_web ? "\u2713 Disponible" : "\u2014 Absent"}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <span style={{ color: "var(--text-muted)" }}>Telephone</span>
+                              <span style={{ color: lead.telephone ? "var(--green)" : "var(--text-muted)" }}>
+                                {lead.telephone ? "\u2713 Disponible" : "\u2014 Absent"}
+                              </span>
+                            </div>
                           </div>
                         </div>
                       </div>

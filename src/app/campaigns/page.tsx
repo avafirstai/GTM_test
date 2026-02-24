@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useCallback } from "react";
 import { useStats } from "@/lib/useStats";
 import { useCampaigns } from "@/lib/useCampaigns";
 import type { Campaign } from "@/lib/useCampaigns";
@@ -12,11 +13,35 @@ import {
   Rocket,
   Link2,
   Zap,
+  Pause,
+  Play,
+  Loader2,
 } from "lucide-react";
 
 export default function CampaignsPage() {
   const { data: statsData, loading: statsLoading } = useStats();
-  const { data: campaignData, loading: campaignLoading } = useCampaigns();
+  const { data: campaignData, loading: campaignLoading, refetch } = useCampaigns();
+  const [togglingId, setTogglingId] = useState<string | null>(null);
+
+  const handleToggle = useCallback(async (campaignId: string, currentStatus: string) => {
+    const action = currentStatus === "active" ? "pause" : "resume";
+    setTogglingId(campaignId);
+    try {
+      const res = await fetch("/api/campaigns/toggle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ campaignId, action }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        await refetch();
+      }
+    } catch {
+      // Silent — will retry on next refetch
+    } finally {
+      setTogglingId(null);
+    }
+  }, [refetch]);
 
   if ((statsLoading && !statsData) || (campaignLoading && !campaignData)) {
     return (
@@ -123,7 +148,12 @@ export default function CampaignsPage() {
 
       {/* Active Campaign */}
       {connected && activeCampaign && (
-        <CampaignCard campaign={activeCampaign} isActive />
+        <CampaignCard
+          campaign={activeCampaign}
+          isActive
+          toggling={togglingId === activeCampaign.id}
+          onToggle={handleToggle}
+        />
       )}
 
       {/* Global Totals */}
@@ -164,6 +194,8 @@ export default function CampaignsPage() {
                 key={camp.id}
                 campaign={camp}
                 isActive={camp.id === campaignData?.activeCampaignId}
+                toggling={togglingId === camp.id}
+                onToggle={handleToggle}
               />
             ))}
           </div>
@@ -298,11 +330,16 @@ export default function CampaignsPage() {
 function CampaignCard({
   campaign,
   isActive,
+  toggling,
+  onToggle,
 }: {
   campaign: Campaign;
   isActive: boolean;
+  toggling: boolean;
+  onToggle: (id: string, status: string) => void;
 }) {
   const a = campaign.analytics;
+  const canToggle = campaign.status === "active" || campaign.status === "paused";
   return (
     <div
       className="rounded-xl border mb-6 p-5"
@@ -336,7 +373,29 @@ function CampaignCard({
               : "N/A"}
           </p>
         </div>
-        <StatusBadge status={campaign.status} />
+        <div className="flex items-center gap-2">
+          {canToggle && (
+            <button
+              onClick={() => onToggle(campaign.id, campaign.status)}
+              disabled={toggling}
+              className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-all disabled:opacity-50"
+              style={{
+                background: campaign.status === "active" ? "var(--amber-subtle)" : "var(--green-subtle)",
+                color: campaign.status === "active" ? "var(--amber)" : "var(--green)",
+              }}
+            >
+              {toggling ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : campaign.status === "active" ? (
+                <Pause size={12} />
+              ) : (
+                <Play size={12} />
+              )}
+              {campaign.status === "active" ? "Pause" : "Reprendre"}
+            </button>
+          )}
+          <StatusBadge status={campaign.status} />
+        </div>
       </div>
       <div className="grid grid-cols-3 md:grid-cols-6 gap-4">
         <Metric label="Leads" value={a.totalLeads.toLocaleString()} />
@@ -353,11 +412,16 @@ function CampaignCard({
 function CampaignRow({
   campaign,
   isActive,
+  toggling,
+  onToggle,
 }: {
   campaign: Campaign;
   isActive: boolean;
+  toggling: boolean;
+  onToggle: (id: string, status: string) => void;
 }) {
   const a = campaign.analytics;
+  const canToggle = campaign.status === "active" || campaign.status === "paused";
   return (
     <div
       className="px-5 py-3 flex items-center justify-between"
@@ -375,7 +439,27 @@ function CampaignRow({
           </p>
         </div>
       </div>
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-2">
+        {canToggle && (
+          <button
+            onClick={() => onToggle(campaign.id, campaign.status)}
+            disabled={toggling}
+            className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-md font-medium transition-all disabled:opacity-50"
+            style={{
+              background: campaign.status === "active" ? "var(--amber-subtle)" : "var(--green-subtle)",
+              color: campaign.status === "active" ? "var(--amber)" : "var(--green)",
+            }}
+          >
+            {toggling ? (
+              <Loader2 size={10} className="animate-spin" />
+            ) : campaign.status === "active" ? (
+              <Pause size={10} />
+            ) : (
+              <Play size={10} />
+            )}
+            {campaign.status === "active" ? "Pause" : "Reprendre"}
+          </button>
+        )}
         <StatusBadge status={campaign.status} />
         <ChevronRight size={14} style={{ color: "var(--text-muted)" }} />
       </div>

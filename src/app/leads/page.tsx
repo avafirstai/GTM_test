@@ -6,6 +6,7 @@ import { LeadsTable } from "@/components/LeadsTable";
 import { fetchLeads } from "@/lib/leads-data";
 import type { Lead, LeadFilters } from "@/lib/leads-data";
 import { Users, Mail, Phone, Globe, Star } from "lucide-react";
+import { useCampaigns } from "@/lib/useCampaigns";
 
 interface StatsData {
   totalLeads: number;
@@ -23,6 +24,7 @@ export default function LeadsPage() {
   const [total, setTotal] = useState(0);
   const [stats, setStats] = useState<StatsData | null>(null);
   const [loading, setLoading] = useState(true);
+  const { data: campaignData } = useCampaigns();
 
   // Parse URL params into initial filters
   const initialFilters: Partial<LeadFilters> = {};
@@ -105,7 +107,7 @@ export default function LeadsPage() {
       </div>
 
       {/* Table */}
-      <LeadsTable leads={leads} initialFilters={initialFilters} />
+      <LeadsTable leads={leads} initialFilters={initialFilters} campaignId={campaignData?.activeCampaignId ?? undefined} />
 
       {/* Info */}
       <p className="text-center text-xs mt-6" style={{ color: "var(--text-muted)" }}>

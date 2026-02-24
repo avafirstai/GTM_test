@@ -7,6 +7,7 @@ import {
   Rocket,
   Users,
   Mail,
+  MessageSquareText,
   Settings,
   Zap,
 } from "lucide-react";
@@ -23,6 +24,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/launch", label: "Lancer", icon: Rocket },
   { href: "/leads", label: "Leads", icon: Users },
   { href: "/campaigns", label: "Campagnes", icon: Mail },
+  { href: "/replies", label: "Reponses", icon: MessageSquareText },
   { href: "/enrichment", label: "Enrichissement", icon: Zap },
 ];
 
