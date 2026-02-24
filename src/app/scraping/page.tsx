@@ -1,14 +1,22 @@
 "use client";
 
 import { useStats } from "@/lib/useStats";
+import {
+  Search,
+  MapPin,
+  Tag,
+  CheckCircle,
+  Clock,
+  XCircle,
+} from "lucide-react";
 
 export default function ScrapingPage() {
   const { data, loading } = useStats();
 
   if (loading || !data) {
     return (
-      <div className="p-6 flex items-center justify-center h-64">
-        <div className="text-sm" style={{ color: "var(--muted)" }}>Chargement scraping...</div>
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="w-5 h-5 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
@@ -22,93 +30,227 @@ export default function ScrapingPage() {
   const verticaleEntries = Object.entries(stats.byVerticale).sort((a, b) => b[1] - a[1]);
 
   return (
-    <div className="p-6 max-w-full">
-      <div className="mb-6">
-        <h1 className="text-xl font-bold">{"\u{1F577}\u{FE0F}"} Scraping &amp; Sources</h1>
-        <p className="text-sm mt-1" style={{ color: "var(--muted)" }}>
-          Apify Google Maps &bull; {totalQueries}/930 requ&ecirc;tes &bull; {villeEntries.length} villes &times; {verticaleEntries.length} cat&eacute;gories
+    <div className="p-8 max-w-5xl mx-auto">
+      {/* Header */}
+      <div className="mb-8">
+        <h1 className="text-xl font-semibold tracking-tight">Scraping</h1>
+        <p className="text-sm mt-1" style={{ color: "var(--text-muted)" }}>
+          Apify Google Maps &middot; {totalQueries}/930 requetes &middot;{" "}
+          {villeEntries.length} villes &times; {verticaleEntries.length} categories
         </p>
       </div>
 
+      {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <StatBox label="Requ\u00eates lanc\u00e9es" value={String(totalQueries)} color="#6366f1" />
-        <StatBox label={`Runs (${succeededRuns}/${apifyRuns.length})`} value={String(apifyRuns.length)} color="#22c55e" />
-        <StatBox label="Leads uniques" value={stats.totalLeads.toLocaleString()} color="#22c55e" />
-        <StatBox label="Restantes" value={String(930 - totalQueries)} color="#f59e0b" />
+        <StatCard label="Requetes lancees" value={String(totalQueries)} />
+        <StatCard label={`Runs (${succeededRuns}/${apifyRuns.length})`} value={String(apifyRuns.length)} accent="green" />
+        <StatCard label="Leads uniques" value={stats.totalLeads.toLocaleString()} accent="green" />
+        <StatCard label="Restantes" value={String(930 - totalQueries)} accent="amber" />
       </div>
 
-      <div className="rounded-xl p-6 mb-6" style={{ background: "var(--card)", border: "1px solid var(--border)" }}>
-        <div className="flex justify-between items-center mb-2">
-          <h3 className="font-semibold">{"\u{1F4CA}"} Progression Scraping</h3>
-          <span className="text-sm font-bold" style={{ color: "#6366f1" }}>{progressPct}%</span>
+      {/* Progress */}
+      <div
+        className="rounded-xl border border-[var(--border)] mb-6"
+        style={{ background: "var(--bg-raised)" }}
+      >
+        <div className="px-5 py-4 border-b border-[var(--border)] flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Search size={16} style={{ color: "var(--text-muted)" }} />
+            <h2 className="text-sm font-medium">Progression</h2>
+          </div>
+          <span className="text-sm font-semibold" style={{ color: "var(--accent)" }}>
+            {progressPct}%
+          </span>
         </div>
-        <div className="w-full h-3 rounded-full" style={{ background: "var(--background)" }}>
-          <div className="h-3 rounded-full transition-all duration-700" style={{ width: `${progressPct}%`, background: "linear-gradient(90deg, #6366f1, #818cf8)" }} />
-        </div>
-        <div className="flex justify-between mt-2">
-          <p className="text-xs" style={{ color: "var(--muted)" }}>{totalQueries} requ&ecirc;tes &rarr; {totalResults.toLocaleString()} r&eacute;sultats</p>
-          <p className="text-xs" style={{ color: "var(--muted)" }}>{930 - totalQueries} restantes</p>
+        <div className="p-5">
+          <div
+            className="w-full h-2 rounded-full"
+            style={{ background: "var(--bg)" }}
+          >
+            <div
+              className="h-2 rounded-full transition-all duration-700"
+              style={{
+                width: `${progressPct}%`,
+                background: "var(--accent)",
+              }}
+            />
+          </div>
+          <div className="flex justify-between mt-2">
+            <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+              {totalQueries} requetes &rarr; {totalResults.toLocaleString()} resultats
+            </p>
+            <p className="text-xs" style={{ color: "var(--text-muted)" }}>
+              {930 - totalQueries} restantes
+            </p>
+          </div>
         </div>
       </div>
 
-      <div className="rounded-xl p-6 mb-6" style={{ background: "var(--card)", border: "1px solid var(--border)" }}>
-        <h3 className="font-semibold mb-4">{"\u{1F4E6}"} Runs Apify ({apifyRuns.length} runs)</h3>
-        <div className="space-y-3">
+      {/* Runs */}
+      <div
+        className="rounded-xl border border-[var(--border)] mb-6"
+        style={{ background: "var(--bg-raised)" }}
+      >
+        <div className="px-5 py-4 border-b border-[var(--border)]">
+          <h2 className="text-sm font-medium">
+            Runs Apify ({apifyRuns.length})
+          </h2>
+        </div>
+        <div className="divide-y divide-[var(--border)]">
           {apifyRuns.map((run) => (
-            <RunCard key={run.runId} runId={run.runId} datasetId={run.datasetId} status={run.status} queries={run.queriesCount} results={run.resultsCount ?? 0} verticale={run.verticale} />
+            <RunRow
+              key={run.runId}
+              verticale={run.verticale}
+              runId={run.runId}
+              status={run.status}
+              queries={run.queriesCount}
+              results={run.resultsCount ?? 0}
+            />
           ))}
         </div>
       </div>
 
-      <div className="rounded-xl p-6 mb-6" style={{ background: "var(--card)", border: "1px solid var(--border)" }}>
-        <h3 className="font-semibold mb-4">{"\u{1F5FA}\u{FE0F}"} Couverture G&eacute;ographique ({villeEntries.length} villes)</h3>
-        <div className="grid grid-cols-3 md:grid-cols-5 lg:grid-cols-6 gap-2">
+      {/* Geo coverage */}
+      <div
+        className="rounded-xl border border-[var(--border)] mb-6"
+        style={{ background: "var(--bg-raised)" }}
+      >
+        <div className="px-5 py-4 border-b border-[var(--border)] flex items-center gap-2">
+          <MapPin size={16} style={{ color: "var(--text-muted)" }} />
+          <h2 className="text-sm font-medium">
+            Couverture ({villeEntries.length} villes)
+          </h2>
+        </div>
+        <div className="p-5 grid grid-cols-3 md:grid-cols-5 lg:grid-cols-6 gap-2">
           {villeEntries.map(([ville, count]) => (
-            <div key={ville} className="p-2 rounded-lg text-center" style={{ background: "var(--background)" }}>
-              <p className="text-sm font-bold" style={{ color: "#6366f1" }}>{count.toLocaleString()}</p>
-              <p className="text-[10px]" style={{ color: "var(--muted)" }}>{ville}</p>
+            <div
+              key={ville}
+              className="p-2 rounded-lg text-center"
+              style={{ background: "var(--bg)" }}
+            >
+              <p className="text-sm font-semibold" style={{ color: "var(--accent)" }}>
+                {count.toLocaleString()}
+              </p>
+              <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+                {ville}
+              </p>
             </div>
           ))}
         </div>
       </div>
 
-      <div className="rounded-xl p-6" style={{ background: "var(--card)", border: "1px solid var(--border)" }}>
-        <h3 className="font-semibold mb-4">{"\u{1F3F7}\u{FE0F}"} Cat&eacute;gories Google Maps ({verticaleEntries.length} verticales)</h3>
-        <div className="flex flex-wrap gap-2">
+      {/* Categories */}
+      <div
+        className="rounded-xl border border-[var(--border)]"
+        style={{ background: "var(--bg-raised)" }}
+      >
+        <div className="px-5 py-4 border-b border-[var(--border)] flex items-center gap-2">
+          <Tag size={16} style={{ color: "var(--text-muted)" }} />
+          <h2 className="text-sm font-medium">
+            Categories ({verticaleEntries.length})
+          </h2>
+        </div>
+        <div className="p-5 flex flex-wrap gap-2">
           {verticaleEntries.map(([cat, count]) => (
-            <span key={cat} className="text-xs px-3 py-1.5 rounded-full" style={{ background: "rgba(99,102,241,0.1)", color: "var(--accent-light)" }}>
+            <span
+              key={cat}
+              className="text-xs px-3 py-1.5 rounded-full"
+              style={{
+                background: "var(--accent-subtle)",
+                color: "var(--accent-hover)",
+              }}
+            >
               {cat} ({count})
             </span>
           ))}
         </div>
       </div>
+
+      {/* Footer */}
+      <p className="text-center text-xs mt-10" style={{ color: "var(--text-muted)" }}>
+        AVA GTM &middot; Scraping pipeline
+      </p>
     </div>
   );
 }
 
-function StatBox({ label, value, color }: { label: string; value: string; color: string }) {
+/* ---------- Sub-components ---------- */
+
+function StatCard({
+  label,
+  value,
+  accent,
+}: {
+  label: string;
+  value: string;
+  accent?: "green" | "amber";
+}) {
+  const colorMap = { green: "var(--green)", amber: "var(--amber)" };
   return (
-    <div className="p-4 rounded-xl text-center" style={{ background: "var(--card)", border: "1px solid var(--border)" }}>
-      <p className="text-2xl font-bold" style={{ color }}>{value}</p>
-      <p className="text-xs mt-1" style={{ color: "var(--muted)" }}>{label}</p>
+    <div
+      className="rounded-lg p-4 border border-[var(--border)]"
+      style={{ background: "var(--bg-raised)" }}
+    >
+      <p className="text-xs font-medium" style={{ color: "var(--text-muted)" }}>
+        {label}
+      </p>
+      <p
+        className="text-xl font-semibold mt-1"
+        style={accent ? { color: colorMap[accent] } : undefined}
+      >
+        {value}
+      </p>
     </div>
   );
 }
 
-function RunCard({ runId, datasetId, status, queries, results, verticale }: { runId: string; datasetId: string; status: string; queries: number; results: number; verticale: string }) {
-  const statusColor = status === "SUCCEEDED" ? "#22c55e" : status === "RUNNING" ? "#f59e0b" : "#ef4444";
+function RunRow({
+  verticale,
+  runId,
+  status,
+  queries,
+  results,
+}: {
+  verticale: string;
+  runId: string;
+  status: string;
+  queries: number;
+  results: number;
+}) {
+  const StatusIcon =
+    status === "SUCCEEDED"
+      ? CheckCircle
+      : status === "RUNNING"
+        ? Clock
+        : XCircle;
+  const statusColor =
+    status === "SUCCEEDED"
+      ? "var(--green)"
+      : status === "RUNNING"
+        ? "var(--amber)"
+        : "var(--red)";
+
   return (
-    <div className="p-4 rounded-lg flex items-center justify-between" style={{ background: "var(--background)" }}>
+    <div className="px-5 py-3 flex items-center justify-between">
       <div>
         <p className="text-sm font-medium">{verticale}</p>
-        <p className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>Run: {runId.substring(0, 8)}... | Dataset: {datasetId.substring(0, 8)}...</p>
+        <p className="text-[11px]" style={{ color: "var(--text-muted)" }}>
+          Run: {runId.substring(0, 8)}...
+        </p>
       </div>
       <div className="flex items-center gap-4">
         <div className="text-right">
-          <p className="text-sm font-bold">{results.toLocaleString()}</p>
-          <p className="text-[10px]" style={{ color: "var(--muted)" }}>{queries} queries</p>
+          <p className="text-sm font-semibold">{results.toLocaleString()}</p>
+          <p className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+            {queries} queries
+          </p>
         </div>
-        <span className="text-xs font-medium px-2 py-1 rounded-full" style={{ background: `${statusColor}20`, color: statusColor }}>{status}</span>
+        <div className="flex items-center gap-1.5">
+          <StatusIcon size={14} style={{ color: statusColor }} />
+          <span className="text-[11px] font-medium" style={{ color: statusColor }}>
+            {status}
+          </span>
+        </div>
       </div>
     </div>
   );

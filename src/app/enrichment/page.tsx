@@ -1,14 +1,21 @@
 "use client";
 
 import { useStats } from "@/lib/useStats";
+import {
+  Zap,
+  Globe,
+  Mail,
+  ArrowRight,
+  CheckCircle,
+} from "lucide-react";
 
 export default function EnrichmentPage() {
   const { data, loading } = useStats();
 
   if (loading || !data) {
     return (
-      <div className="p-6 flex items-center justify-center h-64">
-        <div className="text-sm" style={{ color: "var(--muted)" }}>Chargement enrichissement...</div>
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="w-5 h-5 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
@@ -16,96 +23,125 @@ export default function EnrichmentPage() {
   const { stats, enrichment, categoryEmailRates } = data;
 
   return (
-    <div className="p-6 max-w-full">
-      <div className="mb-6">
-        <h1 className="text-xl font-bold flex items-center gap-2">
-          {"\u{1F50D}"} Enrichissement Emails
+    <div className="p-8 max-w-5xl mx-auto">
+      {/* Header */}
+      <div className="mb-8">
+        <div className="flex items-center gap-3">
+          <h1 className="text-xl font-semibold tracking-tight">Enrichissement</h1>
           <span
-            className="text-xs font-medium px-2 py-0.5 rounded-full"
-            style={{ background: "rgba(34,197,94,0.15)", color: "#22c55e" }}
+            className="text-[11px] font-medium px-2 py-0.5 rounded-full"
+            style={{ background: "var(--green-subtle)", color: "var(--green)" }}
           >
-            GRATUIT
+            Gratuit
           </span>
-        </h1>
-        <p className="text-sm mt-1" style={{ color: "var(--muted)" }}>
-          Scraping web automatique : Site web &rarr; Pages contact &rarr; Extraction emails &rarr; Validation
+        </div>
+        <p className="text-sm mt-1" style={{ color: "var(--text-muted)" }}>
+          Scraping web automatique : site &rarr; contact &rarr; email &rarr; validation
         </p>
       </div>
 
-      {/* Pipeline visual */}
+      {/* Pipeline */}
       <div
-        className="rounded-xl p-6 mb-6"
-        style={{ background: "var(--card)", border: "1px solid var(--border)" }}
+        className="rounded-xl border border-[var(--border)] mb-6"
+        style={{ background: "var(--bg-raised)" }}
       >
-        <h3 className="font-semibold mb-4">{"\u{1F504}"} Pipeline d&apos;enrichissement</h3>
-        <div className="flex items-center gap-2 overflow-x-auto pb-2">
-          <PipelineStep step={1} title="Leads scrapp&eacute;s" desc="Google Maps / Apify" count={stats.totalLeads} color="#6366f1" />
-          <Arrow />
-          <PipelineStep step={2} title="Avec site web" desc="Sites &agrave; scraper" count={stats.withWebsite} color="#818cf8" />
-          <Arrow />
-          <PipelineStep step={3} title="Email trouv&eacute;" desc="Scraping web gratuit" count={stats.withEmail} color="#22c55e" />
-          <Arrow />
-          <PipelineStep step={4} title="Pr&ecirc;t Instantly" desc="Upload campagne" count={stats.withEmail} color="#f59e0b" />
+        <div className="px-5 py-4 border-b border-[var(--border)] flex items-center gap-2">
+          <Zap size={16} style={{ color: "var(--text-muted)" }} />
+          <h2 className="text-sm font-medium">Pipeline</h2>
+        </div>
+        <div className="flex items-center gap-2 p-5 overflow-x-auto">
+          <PipelineStep
+            icon={<Globe size={16} />}
+            title="Leads scrappes"
+            count={stats.totalLeads}
+          />
+          <ArrowRight size={16} className="shrink-0" style={{ color: "var(--text-muted)" }} />
+          <PipelineStep
+            icon={<Globe size={16} />}
+            title="Avec site web"
+            count={stats.withWebsite}
+          />
+          <ArrowRight size={16} className="shrink-0" style={{ color: "var(--text-muted)" }} />
+          <PipelineStep
+            icon={<Mail size={16} />}
+            title="Email trouve"
+            count={stats.withEmail}
+            accent
+          />
+          <ArrowRight size={16} className="shrink-0" style={{ color: "var(--text-muted)" }} />
+          <PipelineStep
+            icon={<CheckCircle size={16} />}
+            title="Pret Instantly"
+            count={stats.withEmail}
+            accent
+          />
         </div>
       </div>
 
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <StatBox label="Leads total" value={stats.totalLeads.toLocaleString()} color="#6366f1" icon={"\u{1F3E2}"} />
-        <StatBox label="Avec site web" value={stats.withWebsite.toLocaleString()} color="#818cf8" icon={"\u{1F310}"} />
-        <StatBox label="Emails trouv&eacute;s" value={stats.withEmail.toLocaleString()} color="#22c55e" icon={"\u{1F4E7}"} />
-        <StatBox label="Taux enrichissement" value={`${stats.emailRate}%`} color="#f59e0b" icon={"\u{1F4C8}"} />
+        <StatCard label="Leads total" value={stats.totalLeads.toLocaleString()} />
+        <StatCard label="Avec site web" value={stats.withWebsite.toLocaleString()} />
+        <StatCard label="Emails trouves" value={stats.withEmail.toLocaleString()} accent="green" />
+        <StatCard label="Taux enrichissement" value={`${stats.emailRate}%`} accent={stats.emailRate > 5 ? "green" : "amber"} />
       </div>
 
-      {/* Method card */}
+      {/* Method */}
       <div
-        className="rounded-xl p-6 mb-6"
-        style={{ background: "var(--card)", border: "1px solid var(--border)" }}
+        className="rounded-xl border border-[var(--border)] mb-6"
+        style={{ background: "var(--bg-raised)" }}
       >
-        <h3 className="font-semibold mb-4">{"\u{1F6E0}\u{FE0F}"} M&eacute;thode d&apos;enrichissement</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="p-4 rounded-lg" style={{ background: "rgba(34,197,94,0.08)", border: "1px solid rgba(34,197,94,0.2)" }}>
-            <div className="flex items-center gap-2 mb-2">
-              <span className="text-lg">{"\u{1F310}"}</span>
-              <span className="text-sm font-bold" style={{ color: "#22c55e" }}>Scraping Web Gratuit</span>
+        <div className="px-5 py-4 border-b border-[var(--border)]">
+          <h2 className="text-sm font-medium">Methode</h2>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-5">
+          <div
+            className="p-4 rounded-lg"
+            style={{ background: "var(--green-subtle)", border: "1px solid rgba(34,197,94,0.15)" }}
+          >
+            <div className="flex items-center gap-2 mb-3">
+              <Globe size={16} style={{ color: "var(--green)" }} />
+              <span className="text-sm font-medium" style={{ color: "var(--green)" }}>
+                Scraping web gratuit
+              </span>
             </div>
-            <p className="text-xs" style={{ color: "var(--muted)" }}>
+            <p className="text-xs mb-3" style={{ color: "var(--text-muted)" }}>
               {enrichment.method}
             </p>
-            <div className="mt-3 space-y-1">
-              <div className="flex items-center gap-2 text-xs">
-                <span style={{ color: "#22c55e" }}>{"\u2713"}</span>
-                <span style={{ color: "var(--muted)" }}>Visite page d&apos;accueil + /contact + /mentions-legales</span>
-              </div>
-              <div className="flex items-center gap-2 text-xs">
-                <span style={{ color: "#22c55e" }}>{"\u2713"}</span>
-                <span style={{ color: "var(--muted)" }}>Extraction emails par regex avanc&eacute;e</span>
-              </div>
-              <div className="flex items-center gap-2 text-xs">
-                <span style={{ color: "#22c55e" }}>{"\u2713"}</span>
-                <span style={{ color: "var(--muted)" }}>Filtrage noreply@, webmaster@, etc.</span>
-              </div>
-              <div className="flex items-center gap-2 text-xs">
-                <span style={{ color: "#22c55e" }}>{"\u2713"}</span>
-                <span style={{ color: "var(--muted)" }}>Priorisation : direction@ &gt; contact@ &gt; info@</span>
-              </div>
+            <div className="space-y-1.5">
+              {[
+                "Visite page d'accueil + /contact + /mentions-legales",
+                "Extraction emails par regex avancee",
+                "Filtrage noreply@, webmaster@, etc.",
+                "Priorisation : direction@ > contact@ > info@",
+              ].map((item) => (
+                <div key={item} className="flex items-center gap-2 text-xs">
+                  <CheckCircle size={12} style={{ color: "var(--green)" }} />
+                  <span style={{ color: "var(--text-secondary)" }}>{item}</span>
+                </div>
+              ))}
             </div>
           </div>
 
-          <div className="p-4 rounded-lg" style={{ background: "var(--background)" }}>
-            <h4 className="text-sm font-medium mb-3">{"\u{1F4B0}"} Co&ucirc;t</h4>
+          <div className="p-4 rounded-lg" style={{ background: "var(--bg)" }}>
+            <h4 className="text-sm font-medium mb-4">Cout</h4>
             <div className="space-y-3">
               <div className="flex justify-between items-center">
-                <span className="text-xs" style={{ color: "var(--muted)" }}>Scraping web</span>
-                <span className="text-sm font-bold" style={{ color: "#22c55e" }}>0 EUR</span>
+                <span className="text-xs" style={{ color: "var(--text-muted)" }}>Scraping web</span>
+                <span className="text-sm font-semibold" style={{ color: "var(--green)" }}>0 EUR</span>
               </div>
               <div className="flex justify-between items-center">
-                <span className="text-xs" style={{ color: "var(--muted)" }}>API externe</span>
-                <span className="text-sm font-bold" style={{ color: "#22c55e" }}>0 EUR</span>
+                <span className="text-xs" style={{ color: "var(--text-muted)" }}>API externe</span>
+                <span className="text-sm font-semibold" style={{ color: "var(--green)" }}>0 EUR</span>
               </div>
-              <div className="flex justify-between items-center pt-2" style={{ borderTop: "1px solid var(--border)" }}>
+              <div
+                className="flex justify-between items-center pt-3"
+                style={{ borderTop: "1px solid var(--border)" }}
+              >
                 <span className="text-xs font-medium">Total</span>
-                <span className="text-lg font-black" style={{ color: "#22c55e" }}>{enrichment.cost}</span>
+                <span className="text-lg font-bold" style={{ color: "var(--green)" }}>
+                  {enrichment.cost}
+                </span>
               </div>
             </div>
           </div>
@@ -114,60 +150,137 @@ export default function EnrichmentPage() {
 
       {/* By category */}
       <div
-        className="rounded-xl p-6"
-        style={{ background: "var(--card)", border: "1px solid var(--border)" }}
+        className="rounded-xl border border-[var(--border)]"
+        style={{ background: "var(--bg-raised)" }}
       >
-        <h3 className="font-semibold mb-4">{"\u{1F4CA}"} Enrichissement par cat&eacute;gorie</h3>
-        <div className="space-y-2">
+        <div className="px-5 py-4 border-b border-[var(--border)]">
+          <h2 className="text-sm font-medium">Par categorie</h2>
+        </div>
+        <div className="p-5 space-y-2.5">
           {categoryEmailRates.map((cat) => (
             <div key={cat.name} className="flex items-center gap-3">
-              <span className="text-[11px] w-48 truncate" style={{ color: "var(--muted)" }}>
+              <span
+                className="text-[11px] w-44 truncate"
+                style={{ color: "var(--text-muted)" }}
+              >
                 {cat.name}
               </span>
-              <div className="flex-1 h-4 rounded-full overflow-hidden" style={{ background: "var(--background)" }}>
+              <div
+                className="flex-1 h-1.5 rounded-full overflow-hidden"
+                style={{ background: "var(--bg)" }}
+              >
                 <div
                   className="h-full rounded-full"
                   style={{
                     width: `${Math.max(cat.rate, 1)}%`,
-                    background: cat.rate > 50 ? "#22c55e" : cat.rate > 20 ? "#f59e0b" : "#6366f1",
+                    background:
+                      cat.rate > 50
+                        ? "var(--green)"
+                        : cat.rate > 20
+                          ? "var(--amber)"
+                          : "var(--accent)",
                   }}
                 />
               </div>
-              <span className="text-xs font-bold w-12 text-right" style={{ color: cat.rate > 0 ? "#22c55e" : "var(--muted)" }}>
+              <span
+                className="text-xs font-medium w-12 text-right"
+                style={{
+                  color: cat.rate > 0 ? "var(--green)" : "var(--text-muted)",
+                }}
+              >
                 {cat.withEmail}/{cat.total}
               </span>
-              <span className="text-[10px] w-10 text-right" style={{ color: cat.rate > 50 ? "#22c55e" : cat.rate > 20 ? "#f59e0b" : "var(--muted)" }}>
+              <span
+                className="text-[11px] w-10 text-right"
+                style={{
+                  color:
+                    cat.rate > 50
+                      ? "var(--green)"
+                      : cat.rate > 20
+                        ? "var(--amber)"
+                        : "var(--text-muted)",
+                }}
+              >
                 {cat.rate}%
               </span>
             </div>
           ))}
         </div>
       </div>
+
+      {/* Footer */}
+      <p className="text-center text-xs mt-10" style={{ color: "var(--text-muted)" }}>
+        AVA GTM &middot; Enrichissement automatise
+      </p>
     </div>
   );
 }
 
-function PipelineStep({ step, title, desc, count, color }: { step: number; title: string; desc: string; count: number; color: string }) {
+/* ---------- Sub-components ---------- */
+
+function PipelineStep({
+  icon,
+  title,
+  count,
+  accent,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  count: number;
+  accent?: boolean;
+}) {
   return (
-    <div className="p-4 rounded-xl min-w-40 text-center shrink-0" style={{ background: "var(--background)", border: "1px solid var(--border)" }}>
-      <div className="w-8 h-8 rounded-full mx-auto mb-2 flex items-center justify-center text-xs font-bold" style={{ background: color, color: "white" }}>{step}</div>
-      <p className="text-sm font-medium">{title}</p>
-      <p className="text-xs mt-0.5" style={{ color: "var(--muted)" }}>{desc}</p>
-      <p className="text-lg font-bold mt-2" style={{ color }}>{count.toLocaleString()}</p>
+    <div
+      className="p-4 rounded-lg min-w-36 text-center shrink-0"
+      style={{
+        background: "var(--bg)",
+        border: "1px solid var(--border)",
+      }}
+    >
+      <div
+        className="w-8 h-8 rounded-full mx-auto mb-2 flex items-center justify-center"
+        style={{
+          background: accent ? "var(--green-subtle)" : "var(--accent-subtle)",
+          color: accent ? "var(--green)" : "var(--accent)",
+        }}
+      >
+        {icon}
+      </div>
+      <p className="text-xs font-medium">{title}</p>
+      <p
+        className="text-lg font-semibold mt-1"
+        style={accent ? { color: "var(--green)" } : undefined}
+      >
+        {count.toLocaleString()}
+      </p>
     </div>
   );
 }
 
-function Arrow() {
-  return <div className="text-xl shrink-0" style={{ color: "var(--muted)" }}>&rarr;</div>;
-}
-
-function StatBox({ label, value, color, icon }: { label: string; value: string; color: string; icon: string }) {
+function StatCard({
+  label,
+  value,
+  accent,
+}: {
+  label: string;
+  value: string;
+  accent?: "green" | "amber";
+}) {
+  const colorMap = { green: "var(--green)", amber: "var(--amber)" };
   return (
-    <div className="p-4 rounded-xl text-center" style={{ background: "var(--card)", border: "1px solid var(--border)" }}>
-      <span className="text-2xl">{icon}</span>
-      <p className="text-2xl font-bold mt-1" style={{ color }}>{value}</p>
-      <p className="text-xs mt-1" style={{ color: "var(--muted)" }}>{label}</p>
+    <div
+      className="rounded-lg p-4 border border-[var(--border)]"
+      style={{ background: "var(--bg-raised)" }}
+    >
+      <p className="text-xs font-medium" style={{ color: "var(--text-muted)" }}>
+        {label}
+      </p>
+      <p
+        className="text-xl font-semibold mt-1"
+        style={accent ? { color: colorMap[accent] } : undefined}
+      >
+        {value}
+      </p>
     </div>
   );
 }

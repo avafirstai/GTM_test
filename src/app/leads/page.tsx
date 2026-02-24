@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { LeadsTable } from "@/components/LeadsTable";
 import { fetchLeads } from "@/lib/leads-data";
 import type { Lead } from "@/lib/leads-data";
+import { Users, Mail, Phone, Globe, Star } from "lucide-react";
 
 interface StatsData {
   totalLeads: number;
@@ -42,11 +43,8 @@ export default function LeadsPage() {
 
   if (loading) {
     return (
-      <div className="p-6 flex items-center justify-center min-h-[400px]">
-        <div className="text-center">
-          <div className="animate-spin inline-block w-8 h-8 border-2 border-current border-t-transparent rounded-full mb-3" style={{ color: "var(--accent)" }} />
-          <p className="text-sm" style={{ color: "var(--muted)" }}>Chargement des leads...</p>
-        </div>
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="w-5 h-5 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
@@ -56,64 +54,82 @@ export default function LeadsPage() {
     withEmail: leads.filter((l) => l.email).length,
     withPhone: leads.filter((l) => l.telephone).length,
     withWebsite: leads.filter((l) => l.site_web).length,
-    avgScore: leads.length > 0 ? Math.round(leads.reduce((s, l) => s + l.score, 0) / leads.length) : 0,
+    avgScore:
+      leads.length > 0
+        ? Math.round(leads.reduce((s, l) => s + l.score, 0) / leads.length)
+        : 0,
     byVerticale: {},
     byVille: {},
   };
 
   return (
-    <div className="p-6 max-w-full">
+    <div className="p-8 max-w-full">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-xl font-bold flex items-center gap-2">
-            {"\u{1F465}"} Base de Leads
-            <span
-              className="text-xs font-medium px-2 py-0.5 rounded-full"
-              style={{ background: "rgba(99,102,241,0.15)", color: "var(--accent-light)" }}
-            >
-              {displayStats.totalLeads.toLocaleString()}
-            </span>
-          </h1>
-          <p className="text-sm mt-1" style={{ color: "var(--muted)" }}>
-            {displayStats.totalLeads.toLocaleString()} entreprises &bull; {leads.length} affich&eacute;es
-          </p>
+      <div className="mb-8">
+        <div className="flex items-center gap-3">
+          <h1 className="text-xl font-semibold tracking-tight">Leads</h1>
+          <span
+            className="text-[11px] font-medium px-2 py-0.5 rounded-full"
+            style={{
+              background: "var(--accent-subtle)",
+              color: "var(--accent-hover)",
+            }}
+          >
+            {displayStats.totalLeads.toLocaleString()}
+          </span>
         </div>
+        <p className="text-sm mt-1" style={{ color: "var(--text-muted)" }}>
+          {displayStats.totalLeads.toLocaleString()} entreprises &middot;{" "}
+          {leads.length} affichees
+        </p>
       </div>
 
       {/* Quick Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
-        <QuickStat label="Total Leads" value={displayStats.totalLeads.toLocaleString()} color="#6366f1" />
-        <QuickStat label="Avec email" value={displayStats.withEmail.toLocaleString()} color="#22c55e" />
-        <QuickStat label="Avec t&eacute;l&eacute;phone" value={displayStats.withPhone.toLocaleString()} color="#06b6d4" />
-        <QuickStat label="Avec site web" value={displayStats.withWebsite.toLocaleString()} color="#818cf8" />
-        <QuickStat label="Score moyen" value={String(displayStats.avgScore)} color="#f59e0b" />
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-8">
+        <QuickStat icon={<Users size={14} />} label="Total" value={displayStats.totalLeads.toLocaleString()} />
+        <QuickStat icon={<Mail size={14} />} label="Avec email" value={displayStats.withEmail.toLocaleString()} accent="green" />
+        <QuickStat icon={<Phone size={14} />} label="Avec telephone" value={displayStats.withPhone.toLocaleString()} />
+        <QuickStat icon={<Globe size={14} />} label="Avec site web" value={displayStats.withWebsite.toLocaleString()} />
+        <QuickStat icon={<Star size={14} />} label="Score moyen" value={String(displayStats.avgScore)} accent="amber" />
       </div>
 
       {/* Table */}
       <LeadsTable leads={leads} />
 
       {/* Info */}
-      <div className="mt-4 text-center">
-        <p className="text-xs" style={{ color: "var(--muted)" }}>
-          Affichage des top {leads.length} leads par score (sur {total.toLocaleString()} au total)
-        </p>
-      </div>
+      <p className="text-center text-xs mt-6" style={{ color: "var(--text-muted)" }}>
+        Top {leads.length} leads par score (sur {total.toLocaleString()} au total)
+      </p>
     </div>
   );
 }
 
-function QuickStat({ label, value, color }: { label: string; value: string; color: string }) {
+function QuickStat({
+  icon,
+  label,
+  value,
+  accent,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  accent?: "green" | "amber";
+}) {
+  const colorMap = { green: "var(--green)", amber: "var(--amber)" };
   return (
     <div
-      className="p-3 rounded-lg text-center"
-      style={{ background: "var(--card)", border: "1px solid var(--border)" }}
+      className="rounded-lg p-3 border border-[var(--border)]"
+      style={{ background: "var(--bg-raised)" }}
     >
-      <p className="text-xl font-bold" style={{ color }}>
+      <div className="flex items-center gap-1.5 mb-1" style={{ color: "var(--text-muted)" }}>
+        {icon}
+        <p className="text-xs font-medium">{label}</p>
+      </div>
+      <p
+        className="text-lg font-semibold"
+        style={accent ? { color: colorMap[accent] } : undefined}
+      >
         {value}
-      </p>
-      <p className="text-[11px] mt-0.5" style={{ color: "var(--muted)" }}>
-        {label}
       </p>
     </div>
   );

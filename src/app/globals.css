@@ -21,17 +21,6 @@
   --red-subtle: rgba(239, 68, 68, 0.1);
   --radius: 10px;
   --radius-sm: 6px;
-
-  /* Legacy aliases — compat with existing pages */
-  --background: var(--bg);
-  --foreground: var(--text-primary);
-  --card: var(--bg-raised);
-  --card-hover: var(--bg-hover);
-  --muted: var(--text-muted);
-  --accent-light: var(--accent-hover);
-  --success: var(--green);
-  --warning: var(--amber);
-  --danger: var(--red);
 }
 
 * {

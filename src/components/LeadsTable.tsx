@@ -9,9 +9,9 @@ interface LeadsTableProps {
 
 const PIPELINE_COLORS: Record<string, { bg: string; text: string; label: string }> = {
   nouveau: { bg: "rgba(99,102,241,0.15)", text: "#818cf8", label: "Nouveau" },
-  contacte: { bg: "rgba(245,158,11,0.15)", text: "#f59e0b", label: "Contact\u00e9" },
-  repondu: { bg: "rgba(34,197,94,0.15)", text: "#22c55e", label: "R\u00e9pondu" },
-  rdv_booke: { bg: "rgba(6,182,212,0.15)", text: "#06b6d4", label: "RDV Book\u00e9" },
+  contacte: { bg: "rgba(245,158,11,0.15)", text: "#f59e0b", label: "Contacté" },
+  repondu: { bg: "rgba(34,197,94,0.15)", text: "#22c55e", label: "Répondu" },
+  rdv_booke: { bg: "rgba(6,182,212,0.15)", text: "#06b6d4", label: "RDV Booké" },
   deal_won: { bg: "rgba(16,185,129,0.15)", text: "#10b981", label: "Deal Won" },
   perdu: { bg: "rgba(239,68,68,0.15)", text: "#ef4444", label: "Perdu" },
 };
@@ -138,7 +138,6 @@ export function LeadsTable({ leads }: LeadsTableProps) {
     <div>
       {/* Filters Row */}
       <div className="flex flex-wrap gap-3 mb-4">
-        {/* Search */}
         <input
           type="text"
           placeholder="Rechercher entreprise, email, ville..."
@@ -146,20 +145,19 @@ export function LeadsTable({ leads }: LeadsTableProps) {
           onChange={(e) => setFilters({ ...filters, search: e.target.value })}
           className="flex-1 min-w-60 px-3 py-2 rounded-lg text-sm"
           style={{
-            background: "var(--background)",
+            background: "var(--bg)",
             border: "1px solid var(--border)",
-            color: "var(--foreground)",
+            color: "var(--text-primary)",
           }}
         />
-        {/* Ville */}
         <select
           value={filters.ville}
           onChange={(e) => setFilters({ ...filters, ville: e.target.value })}
           className="px-3 py-2 rounded-lg text-sm"
           style={{
-            background: "var(--background)",
+            background: "var(--bg)",
             border: "1px solid var(--border)",
-            color: "var(--foreground)",
+            color: "var(--text-primary)",
           }}
         >
           <option value="">Toutes les villes</option>
@@ -167,15 +165,14 @@ export function LeadsTable({ leads }: LeadsTableProps) {
             <option key={v} value={v}>{v}</option>
           ))}
         </select>
-        {/* Verticale */}
         <select
           value={filters.verticale}
           onChange={(e) => setFilters({ ...filters, verticale: e.target.value })}
           className="px-3 py-2 rounded-lg text-sm"
           style={{
-            background: "var(--background)",
+            background: "var(--bg)",
             border: "1px solid var(--border)",
-            color: "var(--foreground)",
+            color: "var(--text-primary)",
           }}
         >
           <option value="">Toutes les verticales</option>
@@ -183,26 +180,24 @@ export function LeadsTable({ leads }: LeadsTableProps) {
             <option key={v} value={v}>{v}</option>
           ))}
         </select>
-        {/* Pipeline */}
         <select
           value={filters.pipeline}
           onChange={(e) => setFilters({ ...filters, pipeline: e.target.value })}
           className="px-3 py-2 rounded-lg text-sm"
           style={{
-            background: "var(--background)",
+            background: "var(--bg)",
             border: "1px solid var(--border)",
-            color: "var(--foreground)",
+            color: "var(--text-primary)",
           }}
         >
           <option value="">Tout le pipeline</option>
           <option value="nouveau">Nouveau</option>
-          <option value="contacte">Contact\u00e9</option>
-          <option value="repondu">R\u00e9pondu</option>
-          <option value="rdv_booke">RDV Book\u00e9</option>
+          <option value="contacte">Contacté</option>
+          <option value="repondu">Répondu</option>
+          <option value="rdv_booke">RDV Booké</option>
           <option value="deal_won">Deal Won</option>
           <option value="perdu">Perdu</option>
         </select>
-        {/* Email filter */}
         <select
           value={filters.hasEmail}
           onChange={(e) =>
@@ -210,9 +205,9 @@ export function LeadsTable({ leads }: LeadsTableProps) {
           }
           className="px-3 py-2 rounded-lg text-sm"
           style={{
-            background: "var(--background)",
+            background: "var(--bg)",
             border: "1px solid var(--border)",
-            color: "var(--foreground)",
+            color: "var(--text-primary)",
           }}
         >
           <option value="all">Email: Tous</option>
@@ -225,10 +220,10 @@ export function LeadsTable({ leads }: LeadsTableProps) {
       {selectedLeads.size > 0 && (
         <div
           className="flex items-center gap-3 px-4 py-2 rounded-lg mb-3"
-          style={{ background: "rgba(99,102,241,0.1)", border: "1px solid rgba(99,102,241,0.3)" }}
+          style={{ background: "var(--accent-subtle)", border: "1px solid rgba(99,102,241,0.3)" }}
         >
-          <span className="text-sm font-medium" style={{ color: "var(--accent-light)" }}>
-            {selectedLeads.size} s\u00e9lectionn\u00e9{selectedLeads.size > 1 ? "s" : ""}
+          <span className="text-sm font-medium" style={{ color: "var(--accent-hover)" }}>
+            {selectedLeads.size} sélectionné{selectedLeads.size > 1 ? "s" : ""}
           </span>
           <button
             className="text-xs px-3 py-1 rounded-md font-medium"
@@ -238,22 +233,16 @@ export function LeadsTable({ leads }: LeadsTableProps) {
           </button>
           <button
             className="text-xs px-3 py-1 rounded-md font-medium"
-            style={{ background: "rgba(34,197,94,0.2)", color: "#22c55e" }}
+            style={{ background: "var(--green-subtle)", color: "var(--green)" }}
           >
-            Envoyer \u00e0 Instantly
-          </button>
-          <button
-            className="text-xs px-3 py-1 rounded-md font-medium"
-            style={{ background: "rgba(245,158,11,0.2)", color: "#f59e0b" }}
-          >
-            Enrichir KSPR
+            Envoyer à Instantly
           </button>
         </div>
       )}
 
       {/* Results count */}
       <div className="flex items-center justify-between mb-3">
-        <p className="text-sm" style={{ color: "var(--muted)" }}>
+        <p className="text-sm" style={{ color: "var(--text-muted)" }}>
           {filteredLeads.length} leads sur {leads.length}
         </p>
       </div>
@@ -262,7 +251,7 @@ export function LeadsTable({ leads }: LeadsTableProps) {
       <div className="overflow-x-auto rounded-xl" style={{ border: "1px solid var(--border)" }}>
         <table className="w-full text-sm">
           <thead>
-            <tr style={{ background: "var(--card)", borderBottom: "1px solid var(--border)" }}>
+            <tr style={{ background: "var(--bg-raised)", borderBottom: "1px solid var(--border)" }}>
               <th className="px-3 py-3 text-left w-8">
                 <input
                   type="checkbox"
@@ -274,41 +263,41 @@ export function LeadsTable({ leads }: LeadsTableProps) {
               <th
                 className="px-3 py-3 text-left cursor-pointer select-none"
                 onClick={() => toggleSort("nom_entreprise")}
-                style={{ color: "var(--muted)" }}
+                style={{ color: "var(--text-muted)" }}
               >
                 Entreprise <SortIcon field="nom_entreprise" />
               </th>
               <th
                 className="px-3 py-3 text-left cursor-pointer select-none"
                 onClick={() => toggleSort("ville")}
-                style={{ color: "var(--muted)" }}
+                style={{ color: "var(--text-muted)" }}
               >
                 Ville <SortIcon field="ville" />
               </th>
-              <th className="px-3 py-3 text-left" style={{ color: "var(--muted)" }}>
+              <th className="px-3 py-3 text-left" style={{ color: "var(--text-muted)" }}>
                 Verticale
               </th>
               <th
                 className="px-3 py-3 text-center cursor-pointer select-none"
                 onClick={() => toggleSort("score")}
-                style={{ color: "var(--muted)" }}
+                style={{ color: "var(--text-muted)" }}
               >
                 Score <SortIcon field="score" />
               </th>
               <th
                 className="px-3 py-3 text-center cursor-pointer select-none"
                 onClick={() => toggleSort("note_google")}
-                style={{ color: "var(--muted)" }}
+                style={{ color: "var(--text-muted)" }}
               >
                 Google <SortIcon field="note_google" />
               </th>
-              <th className="px-3 py-3 text-left" style={{ color: "var(--muted)" }}>
+              <th className="px-3 py-3 text-left" style={{ color: "var(--text-muted)" }}>
                 Email
               </th>
-              <th className="px-3 py-3 text-center" style={{ color: "var(--muted)" }}>
+              <th className="px-3 py-3 text-center" style={{ color: "var(--text-muted)" }}>
                 Pipeline
               </th>
-              <th className="px-3 py-3 text-center" style={{ color: "var(--muted)" }}>
+              <th className="px-3 py-3 text-center" style={{ color: "var(--text-muted)" }}>
                 Enrichi
               </th>
             </tr>
@@ -324,7 +313,7 @@ export function LeadsTable({ leads }: LeadsTableProps) {
                     background: selectedLeads.has(lead.id)
                       ? "rgba(99,102,241,0.06)"
                       : expandedLead === lead.id
-                        ? "var(--card)"
+                        ? "var(--bg-raised)"
                         : "transparent",
                   }}
                   onClick={() => setExpandedLead(expandedLead === lead.id ? null : lead.id)}
@@ -344,7 +333,7 @@ export function LeadsTable({ leads }: LeadsTableProps) {
                   <td className="px-3 py-3">
                     <div>
                       <p className="font-medium text-sm">{lead.nom_entreprise}</p>
-                      <p className="text-xs" style={{ color: "var(--muted)" }}>
+                      <p className="text-xs" style={{ color: "var(--text-muted)" }}>
                         {lead.type_etablissement}
                       </p>
                     </div>
@@ -353,7 +342,7 @@ export function LeadsTable({ leads }: LeadsTableProps) {
                   <td className="px-3 py-3">
                     <span
                       className="text-xs px-2 py-0.5 rounded-full"
-                      style={{ background: "rgba(99,102,241,0.1)", color: "var(--accent-light)" }}
+                      style={{ background: "var(--accent-subtle)", color: "var(--accent-hover)" }}
                     >
                       {lead.verticale}
                     </span>
@@ -365,19 +354,19 @@ export function LeadsTable({ leads }: LeadsTableProps) {
                     <span className="text-sm">
                       {lead.note_google > 0 ? `${lead.note_google} \u2605` : "-"}
                     </span>
-                    <span className="text-xs ml-1" style={{ color: "var(--muted)" }}>
+                    <span className="text-xs ml-1" style={{ color: "var(--text-muted)" }}>
                       ({lead.nb_avis_google})
                     </span>
                   </td>
                   <td className="px-3 py-3">
                     {lead.email ? (
-                      <span className="text-xs" style={{ color: "var(--success)" }}>
+                      <span className="text-xs" style={{ color: "var(--green)" }}>
                         {lead.email.length > 25
                           ? lead.email.substring(0, 22) + "..."
                           : lead.email}
                       </span>
                     ) : (
-                      <span className="text-xs" style={{ color: "var(--danger)" }}>
+                      <span className="text-xs" style={{ color: "var(--red)" }}>
                         Manquant
                       </span>
                     )}
@@ -387,11 +376,11 @@ export function LeadsTable({ leads }: LeadsTableProps) {
                   </td>
                   <td className="px-3 py-3 text-center">
                     {lead.enrichment_status === "completed" ? (
-                      <span style={{ color: "var(--success)" }}>&#10003;</span>
+                      <span style={{ color: "var(--green)" }}>&#10003;</span>
                     ) : lead.enrichment_status === "in_progress" ? (
                       <span className="animate-spin inline-block">&#x21BB;</span>
                     ) : (
-                      <span style={{ color: "var(--muted)" }}>\u2014</span>
+                      <span style={{ color: "var(--text-muted)" }}>&mdash;</span>
                     )}
                   </td>
                 </tr>
@@ -401,31 +390,31 @@ export function LeadsTable({ leads }: LeadsTableProps) {
                     <td
                       colSpan={9}
                       className="px-6 py-4"
-                      style={{ background: "var(--card)", borderBottom: "1px solid var(--border)" }}
+                      style={{ background: "var(--bg-raised)", borderBottom: "1px solid var(--border)" }}
                     >
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                         {/* Info */}
                         <div>
-                          <h4 className="text-xs font-semibold mb-2 uppercase tracking-wide" style={{ color: "var(--muted)" }}>
+                          <h4 className="text-xs font-semibold mb-2 uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
                             Informations
                           </h4>
                           <div className="space-y-1.5 text-sm">
                             <p>
-                              <span style={{ color: "var(--muted)" }}>Adresse:</span>{" "}
+                              <span style={{ color: "var(--text-muted)" }}>Adresse:</span>{" "}
                               {lead.adresse}
                             </p>
                             <p>
-                              <span style={{ color: "var(--muted)" }}>T\u00e9l:</span>{" "}
+                              <span style={{ color: "var(--text-muted)" }}>Tél:</span>{" "}
                               {lead.telephone}
                             </p>
                             <p>
-                              <span style={{ color: "var(--muted)" }}>Site:</span>{" "}
+                              <span style={{ color: "var(--text-muted)" }}>Site:</span>{" "}
                               {lead.site_web ? (
                                 <a
                                   href={lead.site_web}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  style={{ color: "var(--accent-light)" }}
+                                  style={{ color: "var(--accent-hover)" }}
                                   onClick={(e) => e.stopPropagation()}
                                 >
                                   {lead.site_web}
@@ -435,18 +424,18 @@ export function LeadsTable({ leads }: LeadsTableProps) {
                               )}
                             </p>
                             <p>
-                              <span style={{ color: "var(--muted)" }}>Source:</span> {lead.source}
+                              <span style={{ color: "var(--text-muted)" }}>Source:</span> {lead.source}
                             </p>
                           </div>
                         </div>
                         {/* Pitch */}
                         <div>
-                          <h4 className="text-xs font-semibold mb-2 uppercase tracking-wide" style={{ color: "var(--muted)" }}>
+                          <h4 className="text-xs font-semibold mb-2 uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
                             Angle de pitch
                           </h4>
                           <p
                             className="text-sm p-3 rounded-lg"
-                            style={{ background: "var(--background)", fontStyle: "italic" }}
+                            style={{ background: "var(--bg)", fontStyle: "italic" }}
                           >
                             &ldquo;{lead.pitch_angle}&rdquo;
                           </p>
@@ -456,11 +445,11 @@ export function LeadsTable({ leads }: LeadsTableProps) {
                               style={{ background: "var(--accent)", color: "white" }}
                               onClick={(e) => e.stopPropagation()}
                             >
-                              Enrichir d\u00e9cideurs
+                              Enrichir decideurs
                             </button>
                             <button
                               className="text-xs px-3 py-1.5 rounded-md font-medium"
-                              style={{ background: "rgba(34,197,94,0.2)", color: "#22c55e" }}
+                              style={{ background: "var(--green-subtle)", color: "var(--green)" }}
                               onClick={(e) => e.stopPropagation()}
                             >
                               Voir dans Instantly
@@ -469,8 +458,8 @@ export function LeadsTable({ leads }: LeadsTableProps) {
                         </div>
                         {/* Decision Makers */}
                         <div>
-                          <h4 className="text-xs font-semibold mb-2 uppercase tracking-wide" style={{ color: "var(--muted)" }}>
-                            D\u00e9cideurs ({lead.decision_makers.length})
+                          <h4 className="text-xs font-semibold mb-2 uppercase tracking-wide" style={{ color: "var(--text-muted)" }}>
+                            Decideurs ({lead.decision_makers.length})
                           </h4>
                           {lead.decision_makers.length > 0 ? (
                             <div className="space-y-2">
@@ -478,11 +467,11 @@ export function LeadsTable({ leads }: LeadsTableProps) {
                                 <div
                                   key={i}
                                   className="p-2 rounded-lg text-xs"
-                                  style={{ background: "var(--background)" }}
+                                  style={{ background: "var(--bg)" }}
                                 >
                                   <p className="font-medium">{dm.name}</p>
-                                  <p style={{ color: "var(--muted)" }}>{dm.title}</p>
-                                  <p style={{ color: "var(--success)" }}>{dm.email}</p>
+                                  <p style={{ color: "var(--text-muted)" }}>{dm.title}</p>
+                                  <p style={{ color: "var(--green)" }}>{dm.email}</p>
                                 </div>
                               ))}
                             </div>
@@ -490,15 +479,15 @@ export function LeadsTable({ leads }: LeadsTableProps) {
                             <div
                               className="p-4 rounded-lg text-center"
                               style={{
-                                background: "var(--background)",
+                                background: "var(--bg)",
                                 border: "1px dashed var(--border)",
                               }}
                             >
-                              <p className="text-xs" style={{ color: "var(--muted)" }}>
+                              <p className="text-xs" style={{ color: "var(--text-muted)" }}>
                                 Pas encore enrichi
                               </p>
-                              <p className="text-[10px] mt-1" style={{ color: "var(--accent-light)" }}>
-                                Cliquer &laquo;Enrichir d\u00e9cideurs&raquo; pour lancer KSPR
+                              <p className="text-[10px] mt-1" style={{ color: "var(--accent-hover)" }}>
+                                Cliquer &laquo;Enrichir decideurs&raquo; pour lancer
                               </p>
                             </div>
                           )}
@@ -515,8 +504,8 @@ export function LeadsTable({ leads }: LeadsTableProps) {
 
       {filteredLeads.length === 0 && (
         <div className="text-center py-12">
-          <p className="text-lg mb-2">Aucun lead trouv\u00e9</p>
-          <p className="text-sm" style={{ color: "var(--muted)" }}>
+          <p className="text-lg mb-2">Aucun lead trouvé</p>
+          <p className="text-sm" style={{ color: "var(--text-muted)" }}>
             Ajustez vos filtres ou lancez un nouveau scraping
           </p>
         </div>
