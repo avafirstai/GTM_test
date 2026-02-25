@@ -935,70 +935,71 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
                       );
                     })()}
                   </td>
-                  {/* === EMAIL DIRIGEANT column — personal decision-maker emails + source badge === */}
+                  {/* === EMAIL DIRIGEANT column — ALL personal emails, Kaspr first === */}
                   <td className="px-3 py-3">
                     {(() => {
                       const localResult = enrichResults[lead.id];
-                      // Priority 1: local enrichmentEmails from state (immediate after enrichment)
-                      // Priority 2: enrichment_emails from DB (after refresh)
+                      // Priority 1: local enrichmentEmails (immediate) / Priority 2: DB
                       const localDirEmails = localResult?.enrichmentEmails?.filter((e) => e.type === "dirigeant") ?? [];
                       const dbDirEmails = lead.enrichment_emails.filter((e) => e.type === "dirigeant");
-                      const dirEmails = localDirEmails.length > 0 ? localDirEmails : dbDirEmails;
+                      // Sort: kaspr first, then by confidence desc
+                      const dirEmails = [...(localDirEmails.length > 0 ? localDirEmails : dbDirEmails)]
+                        .sort((a, b) => {
+                          if (a.source === "kaspr" && b.source !== "kaspr") return -1;
+                          if (b.source === "kaspr" && a.source !== "kaspr") return 1;
+                          return b.confidence - a.confidence;
+                        });
                       if (dirEmails.length > 0) {
-                        const show = dirEmails.slice(0, 3);
-                        const extra = dirEmails.length - 3;
                         return (
                           <div className="flex flex-col gap-0.5">
-                            {show.map((de, i) => (
-                              <div key={`${lead.id}-de-${i}`} className="flex items-center gap-1">
-                                <button
-                                  type="button"
-                                  className="text-xs font-medium text-left hover:underline cursor-pointer truncate max-w-[180px]"
-                                  style={{ color: "var(--accent-hover)", background: "none", border: "none", padding: 0 }}
-                                  title={`${de.personName ? de.personName + " — " : ""}${de.email} (${de.source}, ${de.confidence}%)`}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    navigator.clipboard.writeText(de.email).catch(() => {/* silent */});
-                                  }}
-                                >
-                                  {de.email}
-                                </button>
-                                <span
-                                  className="text-[7px] px-1 py-px rounded shrink-0"
-                                  style={{ background: "rgba(115,115,115,0.08)", color: "var(--text-muted)" }}
-                                >
-                                  {de.source}
-                                </span>
-                                {/* SMTP verified badge */}
-                                {de.smtpVerified && (
+                            {dirEmails.map((de, i) => {
+                              const isKaspr = de.source === "kaspr";
+                              return (
+                                <div key={`${lead.id}-de-${i}`} className="flex items-center gap-1">
+                                  <button
+                                    type="button"
+                                    className="text-xs font-medium text-left hover:underline cursor-pointer truncate max-w-[180px]"
+                                    style={{ color: isKaspr ? "#f59e0b" : "var(--accent-hover)", background: "none", border: "none", padding: 0 }}
+                                    title={`${de.personName ? de.personName + " — " : ""}${de.email} (${de.source}, ${de.confidence}%) — clic pour copier`}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      navigator.clipboard.writeText(de.email).catch(() => {/* silent */});
+                                    }}
+                                  >
+                                    {de.email}
+                                  </button>
                                   <span
                                     className="text-[7px] px-1 py-px rounded shrink-0 font-bold"
-                                    style={{ background: "rgba(34,197,94,0.15)", color: "#22c55e" }}
-                                    title="SMTP verifie — boite aux lettres existe"
+                                    style={isKaspr
+                                      ? { background: "rgba(245,158,11,0.15)", color: "#f59e0b" }
+                                      : { background: "rgba(115,115,115,0.08)", color: "var(--text-muted)" }
+                                    }
                                   >
-                                    SMTP
+                                    {isKaspr ? "KASPR ★" : de.source}
                                   </span>
-                                )}
-                              </div>
-                            ))}
-                            {extra > 0 && (
-                              <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-                                +{extra} autre{extra > 1 ? "s" : ""}
-                              </span>
-                            )}
+                                  {de.smtpVerified && (
+                                    <span
+                                      className="text-[7px] px-1 py-px rounded shrink-0 font-bold"
+                                      style={{ background: "rgba(34,197,94,0.15)", color: "#22c55e" }}
+                                      title="SMTP verifie"
+                                    >
+                                      SMTP
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })}
                           </div>
                         );
                       }
-                      // Fallback: legacy multi-DM from decision_makers (local state first, then DB)
+                      // Fallback: legacy decision_makers (local state first, then DB)
                       const localDMs = (localResult?.decisionMakers ?? []).filter((dm): dm is typeof dm & { email: string } => !!dm.email);
                       const dbDMs = lead.decision_makers.filter((dm) => dm.email);
                       const dms = localDMs.length > 0 ? localDMs : dbDMs;
                       if (dms.length > 0) {
-                        const show = dms.slice(0, 3);
-                        const extra = dms.length - 3;
                         return (
                           <div className="flex flex-col gap-0.5">
-                            {show.map((dm, i) => (
+                            {dms.map((dm, i) => (
                               <button
                                 key={`${lead.id}-dme-${i}`}
                                 type="button"
@@ -1013,11 +1014,6 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
                                 {dm.email}
                               </button>
                             ))}
-                            {extra > 0 && (
-                              <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-                                +{extra} autre{extra > 1 ? "s" : ""}
-                              </span>
-                            )}
                           </div>
                         );
                       }
