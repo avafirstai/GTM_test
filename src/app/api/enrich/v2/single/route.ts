@@ -105,7 +105,10 @@ export async function POST(request: Request) {
       has_mx: result.hasMx,
     };
 
+    // Persist best email (prefer dirigeant > global for main email column)
     if (result.bestEmail) updateData.email = result.bestEmail;
+    // Persist dirigeant email separately (personal email of the decision-maker)
+    if (result.emailDirigeant) updateData.email_dirigeant = result.emailDirigeant;
     if (result.bestPhone) updateData.phone = result.bestPhone;
     if (result.siret) updateData.siret = result.siret;
     if (result.dirigeant) updateData.dirigeant = result.dirigeant;
@@ -127,8 +130,11 @@ export async function POST(request: Request) {
       success: true,
       leadId: lead.id,
       bestEmail: result.bestEmail,
+      emailGlobal: result.emailGlobal,
+      emailDirigeant: result.emailDirigeant,
       bestPhone: result.bestPhone,
       dirigeant: result.dirigeant,
+      dirigeantLinkedin: result.dirigeantLinkedin,
       siret: result.siret,
       confidence: result.finalConfidence,
       sourcesTried: result.sourcesTried,

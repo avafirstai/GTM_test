@@ -301,13 +301,26 @@ export async function runWaterfall(
   // Find dirigeant LinkedIn URL from metadata
   const dirigeantLinkedin = context.accumulated.linkedinUrl;
 
+  // --- Classify emails: global (generic) vs dirigeant (personal) ---
+  const { emailGlobal, emailDirigeant } = classifyEmails(
+    allResults,
+    context.accumulated.dirigeant,
+    context.accumulated.dirigeantFirstName,
+    context.accumulated.dirigeantLastName,
+  );
+
+  // bestEmail = best overall (prefer dirigeant > global for outreach)
+  const bestEmail = emailDirigeant ?? emailGlobal ?? bestEmailResult?.email ?? null;
+
   console.log(
-    `[Waterfall] DONE leadId=${lead.id} bestEmail=${bestEmailResult?.email ?? "null"} bestPhone=${bestPhone ?? "null"} dirigeant=${context.accumulated.dirigeant ?? "null"} sources=[${sourcesTried.join(",")}] confidence=${finalConfidence} duration=${Date.now() - startTime}ms`,
+    `[Waterfall] DONE leadId=${lead.id} bestEmail=${bestEmail ?? "null"} emailGlobal=${emailGlobal ?? "null"} emailDirigeant=${emailDirigeant ?? "null"} bestPhone=${bestPhone ?? "null"} dirigeant=${context.accumulated.dirigeant ?? "null"} sources=[${sourcesTried.join(",")}] confidence=${finalConfidence} duration=${Date.now() - startTime}ms`,
   );
 
   return {
     leadId: lead.id,
-    bestEmail: bestEmailResult?.email ?? null,
+    bestEmail,
+    emailGlobal,
+    emailDirigeant,
     bestPhone: bestPhone,
     dirigeant: context.accumulated.dirigeant,
     dirigeantLinkedin,
@@ -324,6 +337,103 @@ export async function runWaterfall(
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
+
+/**
+ * Generic email prefixes — company-wide, not personal.
+ */
+const GENERIC_PREFIXES = new Set([
+  "contact", "info", "accueil", "hello", "bonjour", "reception",
+  "admin", "service", "direction", "commercial", "support", "sales",
+  "office", "team", "mail", "noreply", "no-reply",
+]);
+
+/**
+ * Classify all discovered emails into two buckets:
+ * - emailGlobal: generic company email (contact@, info@, etc.)
+ * - emailDirigeant: personal email matching the dirigeant name
+ *
+ * Uses name matching, source context, and email prefix analysis.
+ */
+function classifyEmails(
+  results: EnrichmentResult[],
+  dirigeant: string | null,
+  firstName: string | null,
+  lastName: string | null,
+): { emailGlobal: string | null; emailDirigeant: string | null } {
+  let emailGlobal: string | null = null;
+  let emailDirigeant: string | null = null;
+
+  // Collect all unique emails with their source info
+  const emailEntries: Array<{
+    email: string;
+    source: string;
+    confidence: number;
+    isFromKaspr: boolean;
+    isFromPermutation: boolean;
+  }> = [];
+
+  for (const r of results) {
+    if (!r.email) continue;
+    emailEntries.push({
+      email: r.email.toLowerCase(),
+      source: r.source,
+      confidence: r.confidence,
+      isFromKaspr: r.source === "kaspr",
+      isFromPermutation: r.source === "email_permutation",
+    });
+  }
+
+  // Normalize dirigeant name for matching
+  const normFirst = firstName
+    ?.toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") ?? "";
+  const normLast = lastName
+    ?.toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") ?? "";
+
+  for (const entry of emailEntries) {
+    const prefix = entry.email.split("@")[0] ?? "";
+
+    // Check if this is a generic email
+    const isGeneric = GENERIC_PREFIXES.has(prefix);
+
+    // Check if this email matches the dirigeant name
+    let isDirigeantMatch = false;
+    if (normFirst && normLast) {
+      isDirigeantMatch =
+        prefix === `${normFirst}.${normLast}` ||
+        prefix === `${normFirst[0]}.${normLast}` ||
+        prefix === `${normFirst}${normLast}` ||
+        prefix === `${normLast}.${normFirst}` ||
+        prefix === `${normLast}` ||
+        (prefix.includes(normFirst) && prefix.includes(normLast));
+    }
+
+    // Kaspr and email_permutation results are always dirigeant-targeted
+    if (entry.isFromKaspr || entry.isFromPermutation) {
+      isDirigeantMatch = true;
+    }
+
+    if (isGeneric) {
+      if (!emailGlobal || entry.confidence > 0) {
+        emailGlobal = entry.email;
+      }
+    } else if (isDirigeantMatch) {
+      if (!emailDirigeant || entry.confidence > (emailEntries.find((e) => e.email === emailDirigeant)?.confidence ?? 0)) {
+        emailDirigeant = entry.email;
+      }
+    } else {
+      // Non-generic, non-dirigeant — treat as global (could be another employee)
+      if (!emailGlobal) {
+        emailGlobal = entry.email;
+      }
+    }
+  }
+
+  return { emailGlobal, emailDirigeant };
+}
 
 /**
  * Sources that REQUIRE MX records to work (they verify/generate emails).

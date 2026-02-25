@@ -20,6 +20,7 @@ const SOURCE_BASE_CONFIDENCE: Record<string, number> = {
   google_dork:        55,  // Indirect source — found via web search
   apollo:             75,  // Large DB, good but not always current
   kaspr:              88,  // 500M+ contacts, cross-referenced
+  linkedin_search:    40,  // Metadata source — finds LinkedIn URL for Kaspr
   dns_intel:          30,  // Metadata only, no direct contact info
 };
 

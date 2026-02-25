@@ -15,6 +15,7 @@ import "./sources/deep-scrape";
 import "./sources/sirene";
 import "./sources/email-permutation";
 import "./sources/google-dork";
+import "./sources/linkedin-search";
 import "./sources/kaspr";
 
 // --- Re-export public API ---

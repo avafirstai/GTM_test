@@ -27,8 +27,15 @@ import { registerSource } from "../waterfall";
 /*  Constants                                                          */
 /* ------------------------------------------------------------------ */
 
-/** Pages to scrape beyond the homepage */
-const CONTACT_PATHS = ["/contact", "/nous-contacter", "/about", "/a-propos", "/mentions-legales"];
+/** Pages to scrape beyond the homepage — 2 levels deep */
+const CONTACT_PATHS = [
+  "/contact", "/nous-contacter", "/contactez-nous",
+  "/about", "/a-propos", "/qui-sommes-nous",
+  "/mentions-legales", "/legal",
+  // Team pages — high value for dirigeant names
+  "/equipe", "/notre-equipe", "/team", "/notre-team",
+  "/l-equipe", "/lequipe",
+];
 
 /** Email regex — broad but effective */
 const EMAIL_REGEX = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g;
@@ -197,6 +204,80 @@ function extractPhones(html: string): string[] {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Dirigeant Name Extraction from Team Pages                          */
+/* ------------------------------------------------------------------ */
+
+/** Titles that indicate a dirigeant / decision-maker in French */
+const DIRIGEANT_TITLE_REGEX =
+  /(?:g[ée]rant|fondateur|fondatrice|directeur|directrice|pr[ée]sident|CEO|PDG|dirigeant|co-fondateur|co-fondatrice|managing\s+director|owner|propri[ée]taire)/i;
+
+/**
+ * Try to extract dirigeant name + title from an HTML team page.
+ * Looks for patterns like:
+ *   <h3>Jean Dupont</h3><p>Gérant</p>
+ *   Jean Dupont - Fondateur
+ *   "Jean Dupont, Président"
+ */
+function extractDirigeantFromHtml(
+  html: string,
+): { name: string; title: string } | null {
+  // Strategy 1: Look for title keywords near person names
+  // Match patterns like "Name – Title" or "Name, Title"
+  const nameNearTitleRegex =
+    /([A-ZÀ-ÖÙ-Ü][a-zà-öù-ü]+(?:\s+[A-ZÀ-ÖÙ-Ü][a-zà-öù-ü]+){1,3})\s*[,\-–—|:]\s*((?:g[ée]rant|fondateur|fondatrice|directeur|directrice|pr[ée]sident|CEO|PDG|dirigeant|co-fondateur|co-fondatrice|managing\s+director|propri[ée]taire)[a-zé]*(?:\s+g[ée]n[ée]ral[e]?)?)/gi;
+
+  let match: RegExpExecArray | null;
+  while ((match = nameNearTitleRegex.exec(html)) !== null) {
+    const name = match[1].trim();
+    const title = match[2].trim();
+    // Validate: name should have 2+ words and not be too long
+    const parts = name.split(/\s+/);
+    if (parts.length >= 2 && parts.length <= 4 && name.length <= 50) {
+      return { name, title };
+    }
+  }
+
+  // Strategy 2: Find title keyword and look at nearby text for names
+  // Strip HTML tags first
+  const textOnly = html
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ");
+
+  const titleMatch = DIRIGEANT_TITLE_REGEX.exec(textOnly);
+  if (titleMatch && titleMatch.index !== undefined) {
+    // Look 100 chars before and after the title keyword
+    const start = Math.max(0, titleMatch.index - 100);
+    const end = Math.min(textOnly.length, titleMatch.index + 100);
+    const context = textOnly.slice(start, end);
+
+    // Find a capitalized name near the title
+    const nameRegex = /([A-ZÀ-ÖÙ-Ü][a-zà-öù-ü]+(?:\s+[A-ZÀ-ÖÙ-Ü][a-zà-öù-ü]+){1,2})/g;
+    let nameMatch: RegExpExecArray | null;
+    while ((nameMatch = nameRegex.exec(context)) !== null) {
+      const candidateName = nameMatch[1].trim();
+      const parts = candidateName.split(/\s+/);
+      // Must be 2-3 words, not a common French phrase
+      if (parts.length >= 2 && parts.length <= 3 && candidateName.length <= 40) {
+        const lower = candidateName.toLowerCase();
+        // Exclude common non-name phrases
+        if (
+          !lower.includes("notre equipe") &&
+          !lower.includes("mentions legales") &&
+          !lower.includes("tous droits") &&
+          !lower.includes("politique de")
+        ) {
+          return { name: candidateName, title: titleMatch[0] };
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Email Ranking                                                      */
 /* ------------------------------------------------------------------ */
 
@@ -255,14 +336,26 @@ async function deepScrapeSource(
   const allEmails: string[] = [];
   const allPhones: string[] = [];
   let pagesScraped = 0;
+  let foundDirigeant: { name: string; title: string } | null = null;
 
-  for (const result of htmlResults) {
+  for (let i = 0; i < htmlResults.length; i++) {
+    const result = htmlResults[i];
     if (result.status !== "fulfilled" || !result.value) continue;
     pagesScraped++;
 
     const html = result.value;
     allEmails.push(...extractEmails(html));
     allPhones.push(...extractPhones(html));
+
+    // Try to extract dirigeant from team/about pages (not homepage)
+    if (i > 0 && !foundDirigeant) {
+      foundDirigeant = extractDirigeantFromHtml(html);
+    }
+  }
+
+  // Also check homepage for dirigeant if not found on subpages
+  if (!foundDirigeant && htmlResults[0]?.status === "fulfilled" && htmlResults[0].value) {
+    foundDirigeant = extractDirigeantFromHtml(htmlResults[0].value);
   }
 
   // Deduplicate
@@ -285,10 +378,14 @@ async function deepScrapeSource(
     metadata["all_emails"] = uniqueEmails.slice(0, 5).join(", ");
   }
 
+  if (foundDirigeant) {
+    metadata["dirigeant_title"] = foundDirigeant.title;
+  }
+
   return {
     email: bestEmail,
     phone: bestPhone,
-    dirigeant: null, // HTML scraping rarely finds dirigeant names reliably
+    dirigeant: foundDirigeant?.name ?? null,
     siret: null,
     source: "deep_scrape",
     confidence: 0, // Will be set by computeConfidence

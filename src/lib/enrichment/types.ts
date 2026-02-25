@@ -74,8 +74,12 @@ export interface WaterfallConfig {
 /** Final result after running all applicable sources for one lead */
 export interface EnrichmentPipelineResult {
   leadId: string;
-  /** Best email across all sources (highest confidence) */
+  /** Best email across all sources (highest confidence) — backward compat */
   bestEmail: string | null;
+  /** Generic company email (contact@, info@, etc.) */
+  emailGlobal: string | null;
+  /** Personal email of the dirigeant / decision-maker */
+  emailDirigeant: string | null;
   /** Best phone across all sources */
   bestPhone: string | null;
   /** Director / decision-maker name */
@@ -155,13 +159,14 @@ export const DEFAULT_SOURCES: EnrichmentSource[] = [
   { name: "sirene",             priority: 4, enabled: true,  tier: "fr_public" },
   { name: "email_permutation",  priority: 5, enabled: true,  tier: "fr_public" },
   { name: "google_dork",        priority: 6, enabled: false, tier: "freemium" }, // Off by default (100/day limit)
-  { name: "kaspr",              priority: 7, enabled: false, tier: "paid" },     // Opt-in only
+  { name: "linkedin_search",   priority: 7, enabled: false, tier: "freemium" }, // Requires Google CSE or Apollo
+  { name: "kaspr",              priority: 8, enabled: false, tier: "paid" },     // Opt-in only
 ];
 
 export const DEFAULT_WATERFALL_CONFIG: WaterfallConfig = {
   sources: DEFAULT_SOURCES,
   stopOnConfidence: 80,
-  maxSources: 7,
+  maxSources: 8,
   timeoutPerSource: 10_000,
   useKaspr: false,
   minScoreForPaid: 30,

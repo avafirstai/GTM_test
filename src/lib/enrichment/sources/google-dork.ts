@@ -151,34 +151,59 @@ async function googleDorkSource(
     `"@${domain}" email`, // Find pages mentioning emails for this domain
   ];
 
-  // If we have a dirigeant name, add a targeted query
+  // If we have a dirigeant name, search LinkedIn for their profile
   if (context.accumulated.dirigeant) {
+    const companyName = lead.name.replace(/\b(sarl|sas|sa|eurl|sasu)\b/gi, "").trim();
     queries.push(
-      `"${context.accumulated.dirigeant}" "${domain}" email`,
+      `site:linkedin.com/in "${context.accumulated.dirigeant}" "${companyName}"`,
     );
   }
 
-  // Run searches (use first query, save quota)
+  // Run primary query (email search)
   const searchResult = await googleSearch(queries[0], apiKey, cx);
-  if (!searchResult || !searchResult.items) return emptyResult;
 
   // Extract emails from all snippets
   const allEmails: string[] = [];
   const allLinkedInUrls: string[] = [];
   let pagesFound = 0;
 
-  for (const item of searchResult.items) {
-    pagesFound++;
-    const text = `${item.title} ${item.snippet} ${item.link}`;
+  if (searchResult?.items) {
+    for (const item of searchResult.items) {
+      pagesFound++;
+      const text = `${item.title} ${item.snippet} ${item.link}`;
 
-    // Extract emails
-    const emails = extractEmailsFromText(text, domain);
-    allEmails.push(...emails);
+      // Extract emails
+      const emails = extractEmailsFromText(text, domain);
+      allEmails.push(...emails);
 
-    // Extract LinkedIn URLs (bonus data)
-    const linkedInUrls = extractLinkedInUrls(text);
-    allLinkedInUrls.push(...linkedInUrls);
+      // Extract LinkedIn URLs (bonus data)
+      const linkedInUrls = extractLinkedInUrls(text);
+      allLinkedInUrls.push(...linkedInUrls);
+    }
   }
+
+  // Run secondary query: targeted LinkedIn search for dirigeant
+  // This was previously dead code — the 2nd query was built but never executed
+  if (queries.length > 1) {
+    const linkedInResult = await googleSearch(queries[1], apiKey, cx);
+    if (linkedInResult?.items) {
+      for (const item of linkedInResult.items) {
+        pagesFound++;
+        const text = `${item.title} ${item.snippet} ${item.link}`;
+
+        // Primary goal: find LinkedIn URLs
+        const linkedInUrls = extractLinkedInUrls(text);
+        allLinkedInUrls.push(...linkedInUrls);
+
+        // Secondary: emails found in snippets
+        const emails = extractEmailsFromText(text, domain);
+        allEmails.push(...emails);
+      }
+    }
+  }
+
+  // If both queries returned nothing, early return
+  if (pagesFound === 0) return emptyResult;
 
   // Deduplicate
   const uniqueEmails = [...new Set(allEmails)];
@@ -194,7 +219,7 @@ async function googleDorkSource(
   // Build metadata
   const metadata: Record<string, string> = {
     pages_found: String(pagesFound),
-    total_results: searchResult.searchInformation?.totalResults ?? "0",
+    total_results: searchResult?.searchInformation?.totalResults ?? "0",
     emails_found: String(uniqueEmails.length),
   };
 

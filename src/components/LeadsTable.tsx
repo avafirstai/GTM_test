@@ -20,38 +20,6 @@ const PIPELINE_COLORS: Record<string, { bg: string; text: string; label: string 
   perdu: { bg: "rgba(239,68,68,0.15)", text: "#ef4444", label: "Perdu" },
 };
 
-/* ========== Dirigeant Email Detection ========== */
-const GENERIC_EMAIL_PREFIXES = new Set([
-  "contact", "info", "accueil", "hello", "bonjour", "reception",
-  "admin", "service", "direction", "commercial", "support", "sales",
-  "office", "team", "mail", "noreply", "no-reply",
-]);
-
-function isDirigeantEmail(email: string, dirigeant: string | null | undefined): boolean {
-  if (!email || !dirigeant) return false;
-  const prefix = email.split("@")[0]?.toLowerCase() ?? "";
-  if (GENERIC_EMAIL_PREFIXES.has(prefix)) return false;
-  // Normalize dirigeant name: remove accents, lowercase, split into parts
-  const parts = dirigeant
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .split(/\s+/)
-    .filter(Boolean);
-  if (parts.length < 2) return false;
-  const first = parts[0];
-  const last = parts[parts.length - 1];
-  // Check common French business email patterns
-  return (
-    prefix === `${first}.${last}` ||
-    prefix === `${first[0]}.${last}` ||
-    prefix === `${first}${last}` ||
-    prefix === `${last}.${first}` ||
-    prefix === `${last}` ||
-    (prefix.includes(first) && prefix.includes(last))
-  );
-}
-
 /* ========== MultiSelectFilter ========== */
 function MultiSelectFilter({
   label,
@@ -212,8 +180,11 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
   const [enrichingLeads, setEnrichingLeads] = useState<Set<string>>(new Set());
   const [enrichResults, setEnrichResults] = useState<Record<string, {
     email?: string;
+    emailGlobal?: string;
+    emailDirigeant?: string;
     phone?: string;
     dirigeant?: string;
+    dirigeantLinkedin?: string;
     siret?: string;
     confidence?: number;
     sourcesTried?: string[];
@@ -246,8 +217,11 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
           ...prev,
           [lead.id]: {
             email: data.bestEmail,
+            emailGlobal: data.emailGlobal || undefined,
+            emailDirigeant: data.emailDirigeant || undefined,
             phone: data.bestPhone || undefined,
             dirigeant: data.dirigeant || undefined,
+            dirigeantLinkedin: data.dirigeantLinkedin || undefined,
             siret: data.siret || undefined,
             confidence: data.confidence,
             sourcesTried: data.sourcesTried,
@@ -405,10 +379,10 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
     if (leadsToExport.length === 0) return;
     setBulkAction("exporting");
 
-    const headers = ["Entreprise", "Ville", "Verticale", "Email", "Telephone", "Site Web", "Score", "Adresse"];
+    const headers = ["Entreprise", "Ville", "Verticale", "Email", "Email Dirigeant", "Dirigeant", "Telephone", "Site Web", "Score", "Adresse"];
     const rows = leadsToExport.map((l) => [
-      l.nom_entreprise, l.ville, l.verticale, l.email, l.telephone,
-      l.site_web, String(l.score), l.adresse,
+      l.nom_entreprise, l.ville, l.verticale, l.email, l.email_dirigeant || "",
+      l.dirigeant || "", l.telephone, l.site_web, String(l.score), l.adresse,
     ]);
 
     const csvContent = [
@@ -526,8 +500,11 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
             ...prev,
             [lead.id]: {
               email: data.bestEmail,
+              emailGlobal: data.emailGlobal || undefined,
+              emailDirigeant: data.emailDirigeant || undefined,
               phone: data.bestPhone || undefined,
               dirigeant: data.dirigeant || undefined,
+              dirigeantLinkedin: data.dirigeantLinkedin || undefined,
               siret: data.siret || undefined,
               confidence: data.confidence,
               sourcesTried: data.sourcesTried,
@@ -853,6 +830,9 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
               <th className="px-3 py-3 text-left" style={{ color: "var(--text-muted)" }}>
                 Email
               </th>
+              <th className="px-3 py-3 text-left" style={{ color: "var(--text-muted)" }}>
+                Email Dirigeant
+              </th>
               <th className="px-3 py-3 text-center" style={{ color: "var(--text-muted)" }}>
                 Enrichi
               </th>
@@ -911,10 +891,12 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
                   </td>
                   <td className="px-3 py-3">
                     {(() => {
-                      const displayEmail = lead.email || enrichResults[lead.id]?.email;
+                      const localResult = enrichResults[lead.id];
+                      // Email globale = generic company email (contact@, info@, etc.)
+                      const displayEmail = localResult?.emailGlobal || lead.email || localResult?.email;
                       if (displayEmail) {
                         return (
-                          <span className="text-xs" style={{ color: "var(--green)" }}>
+                          <span className="text-xs" style={{ color: "var(--green)" }} title={displayEmail}>
                             {displayEmail.length > 25
                               ? displayEmail.substring(0, 22) + "..."
                               : displayEmail}
@@ -928,17 +910,38 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
                       );
                     })()}
                   </td>
+                  <td className="px-3 py-3">
+                    {(() => {
+                      const localResult = enrichResults[lead.id];
+                      // Email dirigeant = personal email of the decision-maker
+                      const dirEmail = localResult?.emailDirigeant || lead.email_dirigeant;
+                      if (dirEmail) {
+                        return (
+                          <span className="text-xs font-medium" style={{ color: "var(--accent-hover)" }} title={dirEmail}>
+                            {dirEmail.length > 25
+                              ? dirEmail.substring(0, 22) + "..."
+                              : dirEmail}
+                          </span>
+                        );
+                      }
+                      return (
+                        <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+                          —
+                        </span>
+                      );
+                    })()}
+                  </td>
                   <td className="px-3 py-3 text-center">
                     {(() => {
                       const localResult = enrichResults[lead.id];
-                      const email = lead.email || localResult?.email;
-                      const dirigeant = localResult?.dirigeant || lead.dirigeant;
+                      const hasEmail = lead.email || localResult?.email;
+                      const hasDirEmail = localResult?.emailDirigeant || lead.email_dirigeant;
 
-                      if (email && isDirigeantEmail(email, dirigeant)) {
-                        return <span className="text-xs font-bold" style={{ color: "var(--green)" }} title={`Email dirigeant: ${email}`}>✓✓</span>;
+                      if (hasEmail && hasDirEmail) {
+                        return <span className="text-xs font-bold" style={{ color: "var(--green)" }} title={`Email dirigeant: ${hasDirEmail}`}>✓✓</span>;
                       }
-                      if (email) {
-                        return <span className="text-xs font-medium" style={{ color: "var(--green)" }} title={`Email: ${email}`}>✓</span>;
+                      if (hasEmail) {
+                        return <span className="text-xs font-medium" style={{ color: "var(--green)" }} title={`Email: ${hasEmail}`}>✓</span>;
                       }
                       if (localResult?.error) {
                         return <span className="text-xs font-medium" style={{ color: "#ef4444" }} title={localResult.error}>✗</span>;
@@ -954,7 +957,7 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
                 {expandedLead === lead.id && (
                   <tr key={`${lead.id}-expanded`}>
                     <td
-                      colSpan={8}
+                      colSpan={9}
                       className="px-6 py-4"
                       style={{ background: "var(--bg-raised)", borderBottom: "1px solid var(--border)" }}
                     >

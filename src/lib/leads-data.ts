@@ -9,6 +9,8 @@ export interface Lead {
   adresse: string;
   telephone: string;
   email: string;
+  /** Personal email of the dirigeant / decision-maker (separate from generic company email) */
+  email_dirigeant: string | null;
   site_web: string;
   note_google: number;
   nb_avis_google: number;
@@ -87,6 +89,7 @@ interface ApiLead {
   enrichment_source: string | null;
   enrichment_confidence: number | null;
   enriched_at: string | null;
+  email_dirigeant: string | null;
 }
 
 interface LeadsApiResponse {
@@ -123,6 +126,7 @@ function mapApiLeadToLead(api: ApiLead): Lead {
     adresse: api.address || "",
     telephone: api.phone || "",
     email: api.email || "",
+    email_dirigeant: api.email_dirigeant ?? null,
     site_web: api.website || "",
     note_google: api.rating ?? 0,
     nb_avis_google: api.reviews ?? 0,
