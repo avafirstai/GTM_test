@@ -66,6 +66,8 @@ export interface EnrichedEmail {
   isBest: boolean;
   /** Name of the person this email belongs to (if known) */
   personName: string | null;
+  /** Whether this email passed SMTP verification */
+  smtpVerified?: boolean;
 }
 
 /* ------------------------------------------------------------------ */

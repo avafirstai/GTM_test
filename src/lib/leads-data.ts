@@ -62,6 +62,8 @@ export interface EnrichedEmailData {
   isBest: boolean;
   /** Name of the person this email belongs to (if known) */
   personName: string | null;
+  /** Whether this email passed SMTP verification (mailbox exists) */
+  smtpVerified?: boolean;
 }
 
 export type SortField = "nom_entreprise" | "ville" | "score" | "date_scraping";

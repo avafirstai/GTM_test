@@ -18,6 +18,7 @@ import type {
   DecisionMakerData,
 } from "../types";
 import { registerSource } from "../waterfall";
+import { canQueryGoogleCSE, recordGoogleCSEQuery } from "../google-cse-quota";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -98,6 +99,9 @@ async function googleSearch(
       return null;
     }
 
+    // Record successful query against quota
+    recordGoogleCSEQuery(1);
+
     return await resp.json();
   } catch {
     clearTimeout(timeout);
@@ -147,6 +151,15 @@ async function googleDorkSource(
     return {
       ...emptyResult,
       metadata: { error: "GOOGLE_CSE_API_KEY or GOOGLE_CSE_CX not configured" },
+    };
+  }
+
+  // Check quota before making any API calls
+  if (!canQueryGoogleCSE()) {
+    console.warn("[Google CSE] Skipping — daily quota exhausted");
+    return {
+      ...emptyResult,
+      metadata: { error: "google_cse_quota_exhausted" },
     };
   }
 
