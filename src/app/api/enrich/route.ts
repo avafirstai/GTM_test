@@ -162,19 +162,22 @@ export async function POST(request: Request) {
   const technique = body.technique || "website_scraping";
   const limit = Math.min(Math.max(body.limit ?? 50, 1), 200);
 
-  // Build query for leads needing enrichment (have website, no email)
+  // Build query for leads needing enrichment (no email)
   let query = supabase
     .from("gtm_leads")
     .select("id, name, website, email, city, category")
-    .not("website", "is", null)
-    .neq("website", "")
     .or("email.is.null,email.eq.")
     .limit(limit);
 
   // Apply filters
   if (body.leadIds && body.leadIds.length > 0) {
+    // When specific leadIds are provided, don't require website — the waterfall
+    // can try multiple sources (DNS, SIRENE, pattern guess, etc.)
     query = query.in("id", body.leadIds);
   } else {
+    // For broad queries without leadIds, require website to avoid processing
+    // leads that have no enrichment signal at all
+    query = query.not("website", "is", null).neq("website", "");
     if (body.category) {
       query = query.ilike("category", `%${body.category}%`);
     }
@@ -196,7 +199,7 @@ export async function POST(request: Request) {
       found: 0,
       failed: 0,
       results: [],
-      message: "Aucun lead a enrichir avec ces filtres (tous ont deja un email ou pas de site web)",
+      message: "Aucun lead a enrichir avec ces filtres (tous ont deja un email)",
     });
   }
 
@@ -213,6 +216,17 @@ export async function POST(request: Request) {
       batch.map(async (lead): Promise<EnrichResult> => {
         let email: string | null = null;
         let source = technique;
+
+        // Skip techniques that require a website if the lead has none
+        if (!lead.website) {
+          return {
+            leadId: lead.id,
+            name: lead.name || "",
+            email: null,
+            source,
+            error: "No website available for scraping",
+          };
+        }
 
         if (technique === "website_scraping") {
           email = await scrapeEmailFromWebsite(lead.website);

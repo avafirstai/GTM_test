@@ -429,9 +429,10 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
   }, [selectedLeads, filteredLeads, campaignId]);
 
   const handleBulkEnrich = useCallback(async () => {
-    const leadsToEnrich = filteredLeads.filter((l) => selectedLeads.has(l.id) && !l.email && l.site_web);
+    // Enrichir tous les leads sans email (le waterfall gere les sources)
+    const leadsToEnrich = filteredLeads.filter((l) => selectedLeads.has(l.id) && !l.email);
     if (leadsToEnrich.length === 0) {
-      setBulkMessage("Aucun lead sans email avec site web dans la selection");
+      setBulkMessage("Aucun lead sans email dans la selection");
       setBulkMessageType("error");
       setTimeout(() => setBulkMessage(""), 3000);
       return;
