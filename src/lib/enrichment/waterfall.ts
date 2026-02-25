@@ -194,30 +194,43 @@ export async function runWaterfall(
     .filter((s) => s.enabled)
     .sort((a, b) => a.priority - b.priority);
 
+  console.log(
+    `[Waterfall] START leadId=${lead.id} domain=${domain} sources=[${sortedSources.map((s) => s.name).join(",")}]`,
+  );
+
   for (const source of sortedSources) {
     // --- Guard: max sources reached ---
     if (sourcesTried.length >= config.maxSources) {
+      console.log(`[Waterfall] SKIP source=${source.name} reason=maxSources(${config.maxSources})`);
       break;
     }
 
     // --- Guard: Kaspr opt-in check ---
     if (source.name === "kaspr") {
-      if (!config.useKaspr) continue;
-      // Only filter by score if minScoreForPaid > 0 (0 = use for all leads)
-      if (config.minScoreForPaid > 0 && (lead.score ?? 0) < config.minScoreForPaid) continue;
-      // Need a LinkedIn URL to call Kaspr
-      if (!context.accumulated.linkedinUrl) continue;
+      if (!config.useKaspr) {
+        console.log(`[Waterfall] SKIP source=kaspr reason=useKaspr=false`);
+        continue;
+      }
+      if (config.minScoreForPaid > 0 && (lead.score ?? 0) < config.minScoreForPaid) {
+        console.log(`[Waterfall] SKIP source=kaspr reason=score(${lead.score ?? 0})<minScore(${config.minScoreForPaid})`);
+        continue;
+      }
+      if (!context.accumulated.linkedinUrl) {
+        console.log(`[Waterfall] SKIP source=kaspr reason=noLinkedInUrl`);
+        continue;
+      }
     }
 
-    // --- Guard: skip email sources if domain has no MX ---
+    // --- Guard: skip MX-dependent email sources if domain has no MX ---
     if (skipEmailSources && isEmailSource(source.name)) {
+      console.log(`[Waterfall] SKIP source=${source.name} reason=noMxRecords`);
       continue;
     }
 
     // --- Guard: source function must be registered ---
     const sourceFn = sourceRegistry.get(source.name);
     if (!sourceFn) {
-      // Source not yet implemented — skip silently
+      console.warn(`[Waterfall] WARN source=${source.name} not registered — skipping`);
       continue;
     }
 
@@ -234,15 +247,14 @@ export async function runWaterfall(
         config.timeoutPerSource,
       );
     } catch (err) {
-      // Source threw an error — log and continue to next source
       console.error(
-        `[Waterfall] Source ${source.name} failed:`,
+        `[Waterfall] Source ${source.name} THREW:`,
         err instanceof Error ? err.message : "unknown error",
       );
     }
 
     if (!result) {
-      // Timeout or error — continue to next source
+      console.log(`[Waterfall] source=${source.name} result=null (timeout or error) duration=${Date.now() - sourceStart}ms`);
       continue;
     }
 
@@ -255,9 +267,14 @@ export async function runWaterfall(
     // Update accumulated context with new data
     updateAccumulated(context, result);
 
-    // Check if this source signals to skip email sources (e.g. no MX records)
+    console.log(
+      `[Waterfall] source=${source.name} email=${result.email ?? "null"} phone=${result.phone ?? "null"} dirigeant=${result.dirigeant ?? "null"} confidence=${result.confidence} duration=${result.durationMs}ms`,
+    );
+
+    // Check if this source signals to skip MX-dependent email sources
     if (result.skipEmailSources) {
       skipEmailSources = true;
+      console.log(`[Waterfall] source=${source.name} set skipEmailSources=true (no MX)`);
     }
 
     allResults.push(result);
@@ -265,6 +282,7 @@ export async function runWaterfall(
     // --- Early stop: confidence threshold reached ---
     const aggregateConfidence = computeAggregateConfidence(allResults);
     if (aggregateConfidence >= config.stopOnConfidence) {
+      console.log(`[Waterfall] EARLY STOP confidence=${aggregateConfidence}>=${config.stopOnConfidence}`);
       break;
     }
   }
@@ -282,6 +300,10 @@ export async function runWaterfall(
 
   // Find dirigeant LinkedIn URL from metadata
   const dirigeantLinkedin = context.accumulated.linkedinUrl;
+
+  console.log(
+    `[Waterfall] DONE leadId=${lead.id} bestEmail=${bestEmailResult?.email ?? "null"} bestPhone=${bestPhone ?? "null"} dirigeant=${context.accumulated.dirigeant ?? "null"} sources=[${sourcesTried.join(",")}] confidence=${finalConfidence} duration=${Date.now() - startTime}ms`,
+  );
 
   return {
     leadId: lead.id,
@@ -303,10 +325,12 @@ export async function runWaterfall(
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
-/** Sources that specifically look for email addresses */
+/**
+ * Sources that REQUIRE MX records to work (they verify/generate emails).
+ * schema_org and deep_scrape are NOT in this set — they find emails
+ * published on web pages via HTML parsing, independent of MX records.
+ */
 const EMAIL_SOURCES = new Set([
-  "schema_org",
-  "deep_scrape",
   "email_permutation",
   "google_dork",
   "kaspr",

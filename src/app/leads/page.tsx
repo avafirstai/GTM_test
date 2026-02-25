@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { LeadsTable } from "@/components/LeadsTable";
 import { fetchLeads } from "@/lib/leads-data";
@@ -27,6 +27,13 @@ export default function LeadsPage() {
   const [loadedCount, setLoadedCount] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
   const { data: campaignData } = useCampaigns();
+  const [serverSearch, setServerSearch] = useState("");
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleSearchChange = useCallback((query: string) => {
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => setServerSearch(query), 400);
+  }, []);
 
   // Parse URL params into initial filters
   const initialFilters: Partial<LeadFilters> = {};
@@ -40,7 +47,7 @@ export default function LeadsPage() {
   // Stable reference for URL params used in fetch
   const paramsKey = searchParams.toString();
 
-  const loadLeads = useCallback(async (offset = 0, append = false) => {
+  const loadLeads = useCallback(async (offset = 0, append = false, search = "") => {
     if (!append) setLoading(true);
     else setLoadingMore(true);
 
@@ -52,6 +59,7 @@ export default function LeadsPage() {
           offset,
           sortBy: "score",
           sortDir: "desc",
+          ...(search ? { search } : {}),
           ...(villeParams.length > 0 ? { city: villeParams } : {}),
           ...(verticaleParams.length > 0 ? { category: verticaleParams } : {}),
           ...(hasEmailParam === "yes" || hasEmailParam === "no" ? { hasEmail: hasEmailParam } : {}),
@@ -80,8 +88,8 @@ export default function LeadsPage() {
   }, [paramsKey]);
 
   useEffect(() => {
-    loadLeads(0, false);
-  }, [loadLeads]);
+    loadLeads(0, false, serverSearch);
+  }, [loadLeads, serverSearch]);
 
   if (loading) {
     return (
@@ -136,13 +144,13 @@ export default function LeadsPage() {
       </div>
 
       {/* Table */}
-      <LeadsTable leads={leads} initialFilters={initialFilters} campaignId={campaignData?.activeCampaignId ?? undefined} />
+      <LeadsTable leads={leads} initialFilters={initialFilters} campaignId={campaignData?.activeCampaignId ?? undefined} onSearchChange={handleSearchChange} />
 
       {/* Load more / Info */}
       <div className="text-center mt-6 space-y-2">
         {loadedCount < total && (
           <button
-            onClick={() => loadLeads(loadedCount, true)}
+            onClick={() => loadLeads(loadedCount, true, serverSearch)}
             disabled={loadingMore}
             className="px-4 py-2 text-sm font-medium rounded-lg border border-[var(--border)] hover:bg-[var(--bg-raised)] transition-colors disabled:opacity-50"
           >

@@ -43,7 +43,7 @@ export interface DecisionMaker {
   confidence: number;
 }
 
-export type SortField = "nom_entreprise" | "ville" | "score" | "note_google" | "nb_avis_google" | "statut_pipeline" | "date_scraping";
+export type SortField = "nom_entreprise" | "ville" | "score" | "date_scraping";
 export type SortDirection = "asc" | "desc";
 
 export interface LeadFilters {
@@ -100,14 +100,14 @@ interface LeadsApiResponse {
  * Derive enrichment_status from DB value or heuristic fallback.
  */
 function deriveEnrichmentStatus(api: ApiLead): Lead["enrichment_status"] {
+  // Email present = enriched, regardless of what DB status says
+  if (api.email) return "enriched";
+  if (api.enriched_at) return "enriched";
   // Use DB value if present and valid
   const dbStatus = api.enrichment_status;
   if (dbStatus === "enriched" || dbStatus === "failed" || dbStatus === "skipped" || dbStatus === "pending") {
     return dbStatus;
   }
-  // Fallback heuristic for leads without the column populated yet
-  if (api.enriched_at) return "enriched";
-  if (api.email) return "enriched";
   return "pending";
 }
 

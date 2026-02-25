@@ -8,6 +8,7 @@ interface LeadsTableProps {
   leads: Lead[];
   initialFilters?: Partial<LeadFilters>;
   campaignId?: string;
+  onSearchChange?: (query: string) => void;
 }
 
 const PIPELINE_COLORS: Record<string, { bg: string; text: string; label: string }> = {
@@ -18,6 +19,38 @@ const PIPELINE_COLORS: Record<string, { bg: string; text: string; label: string 
   deal_won: { bg: "rgba(16,185,129,0.15)", text: "#10b981", label: "Deal Won" },
   perdu: { bg: "rgba(239,68,68,0.15)", text: "#ef4444", label: "Perdu" },
 };
+
+/* ========== Dirigeant Email Detection ========== */
+const GENERIC_EMAIL_PREFIXES = new Set([
+  "contact", "info", "accueil", "hello", "bonjour", "reception",
+  "admin", "service", "direction", "commercial", "support", "sales",
+  "office", "team", "mail", "noreply", "no-reply",
+]);
+
+function isDirigeantEmail(email: string, dirigeant: string | null | undefined): boolean {
+  if (!email || !dirigeant) return false;
+  const prefix = email.split("@")[0]?.toLowerCase() ?? "";
+  if (GENERIC_EMAIL_PREFIXES.has(prefix)) return false;
+  // Normalize dirigeant name: remove accents, lowercase, split into parts
+  const parts = dirigeant
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .split(/\s+/)
+    .filter(Boolean);
+  if (parts.length < 2) return false;
+  const first = parts[0];
+  const last = parts[parts.length - 1];
+  // Check common French business email patterns
+  return (
+    prefix === `${first}.${last}` ||
+    prefix === `${first[0]}.${last}` ||
+    prefix === `${first}${last}` ||
+    prefix === `${last}.${first}` ||
+    prefix === `${last}` ||
+    (prefix.includes(first) && prefix.includes(last))
+  );
+}
 
 /* ========== MultiSelectFilter ========== */
 function MultiSelectFilter({
@@ -159,7 +192,7 @@ function PipelineBadge({ status }: { status: string }) {
 }
 
 /* ========== LeadsTable ========== */
-export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProps) {
+export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }: LeadsTableProps) {
   const [filters, setFilters] = useState<LeadFilters>({
     search: "",
     ville: [],
@@ -372,10 +405,10 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
     if (leadsToExport.length === 0) return;
     setBulkAction("exporting");
 
-    const headers = ["Entreprise", "Ville", "Verticale", "Email", "Telephone", "Site Web", "Score", "Note Google", "Avis Google", "Adresse"];
+    const headers = ["Entreprise", "Ville", "Verticale", "Email", "Telephone", "Site Web", "Score", "Adresse"];
     const rows = leadsToExport.map((l) => [
       l.nom_entreprise, l.ville, l.verticale, l.email, l.telephone,
-      l.site_web, String(l.score), String(l.note_google), String(l.nb_avis_google), l.adresse,
+      l.site_web, String(l.score), l.adresse,
     ]);
 
     const csvContent = [
@@ -599,7 +632,10 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
           type="text"
           placeholder="Rechercher entreprise, email, ville..."
           value={filters.search}
-          onChange={(e) => updateFilters({ ...filters, search: e.target.value })}
+          onChange={(e) => {
+            updateFilters({ ...filters, search: e.target.value });
+            onSearchChange?.(e.target.value);
+          }}
           className="flex-1 min-w-60 px-3 py-2 rounded-lg text-sm"
           style={{
             background: "var(--bg)",
@@ -814,18 +850,8 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
               >
                 Score <SortIcon field="score" />
               </th>
-              <th
-                className="px-3 py-3 text-center cursor-pointer select-none"
-                onClick={() => toggleSort("note_google")}
-                style={{ color: "var(--text-muted)" }}
-              >
-                Google <SortIcon field="note_google" />
-              </th>
               <th className="px-3 py-3 text-left" style={{ color: "var(--text-muted)" }}>
                 Email
-              </th>
-              <th className="px-3 py-3 text-center" style={{ color: "var(--text-muted)" }}>
-                Pipeline
               </th>
               <th className="px-3 py-3 text-center" style={{ color: "var(--text-muted)" }}>
                 Enrichi
@@ -883,14 +909,6 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
                   <td className="px-3 py-3 text-center">
                     <ScoreBadge score={lead.score} />
                   </td>
-                  <td className="px-3 py-3 text-center">
-                    <span className="text-sm">
-                      {lead.note_google > 0 ? `${lead.note_google} \u2605` : "-"}
-                    </span>
-                    <span className="text-xs ml-1" style={{ color: "var(--text-muted)" }}>
-                      ({lead.nb_avis_google})
-                    </span>
-                  </td>
                   <td className="px-3 py-3">
                     {(() => {
                       const displayEmail = lead.email || enrichResults[lead.id]?.email;
@@ -911,24 +929,23 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
                     })()}
                   </td>
                   <td className="px-3 py-3 text-center">
-                    <PipelineBadge status={lead.statut_pipeline} />
-                  </td>
-                  <td className="px-3 py-3 text-center">
                     {(() => {
                       const localResult = enrichResults[lead.id];
-                      const hasEmail = lead.email || localResult?.email;
-                      // Email exists (from DB, session, or any source) = enriched
-                      if (hasEmail) {
-                        return <span className="text-xs font-medium" style={{ color: "var(--green)" }} title="Email trouve">✓ Oui</span>;
+                      const email = lead.email || localResult?.email;
+                      const dirigeant = localResult?.dirigeant || lead.dirigeant;
+
+                      if (email && isDirigeantEmail(email, dirigeant)) {
+                        return <span className="text-xs font-bold" style={{ color: "var(--green)" }} title={`Email dirigeant: ${email}`}>✓✓</span>;
                       }
-                      // Tried but no email found (session or DB)
+                      if (email) {
+                        return <span className="text-xs font-medium" style={{ color: "var(--green)" }} title={`Email: ${email}`}>✓</span>;
+                      }
                       if (localResult?.error) {
-                        return <span className="text-xs font-medium" style={{ color: "#ef4444" }} title={localResult.error}>✗ Tente</span>;
+                        return <span className="text-xs font-medium" style={{ color: "#ef4444" }} title={localResult.error}>✗</span>;
                       }
                       if (lead.enrichment_status === "failed" || lead.enrichment_status === "skipped") {
-                        return <span className="text-xs font-medium" style={{ color: "#ef4444" }} title="Enrichissement tente, rien trouve">✗ Tente</span>;
+                        return <span className="text-xs font-medium" style={{ color: "#ef4444" }} title="Rien trouve">✗</span>;
                       }
-                      // Never tried
                       return <span className="text-xs" style={{ color: "var(--text-muted)" }}>—</span>;
                     })()}
                   </td>
@@ -937,7 +954,7 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
                 {expandedLead === lead.id && (
                   <tr key={`${lead.id}-expanded`}>
                     <td
-                      colSpan={10}
+                      colSpan={8}
                       className="px-6 py-4"
                       style={{ background: "var(--bg-raised)", borderBottom: "1px solid var(--border)" }}
                     >
