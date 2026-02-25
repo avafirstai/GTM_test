@@ -3,6 +3,7 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { ChevronDown, X, Loader2, Linkedin, Mail as MailIcon, Shield, MapPin } from "lucide-react";
 import type { Lead, DecisionMaker, SortField, SortDirection, LeadFilters } from "@/lib/leads-data";
+import { useCustomData } from "@/lib/useCustomData";
 
 interface LeadsTableProps {
   leads: Lead[];
@@ -161,6 +162,7 @@ function PipelineBadge({ status }: { status: string }) {
 
 /* ========== LeadsTable ========== */
 export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }: LeadsTableProps) {
+  const { allVilles: customVilles, allVerticales: customVerticales } = useCustomData();
   const [filters, setFilters] = useState<LeadFilters>({
     search: "",
     ville: [],
@@ -288,9 +290,16 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
     setCurrentPage(1);
   }, []);
 
-  // Derive unique filter options
-  const villes = useMemo(() => [...new Set(leads.map((l) => l.ville).filter(Boolean))].sort(), [leads]);
-  const verticales = useMemo(() => [...new Set(leads.map((l) => l.verticale).filter(Boolean))].sort(), [leads]);
+  // Derive unique filter options: leads data + custom villes/verticales from DB
+  const villes = useMemo(() => {
+    const fromLeads = leads.map((l) => l.ville).filter(Boolean);
+    return [...new Set([...fromLeads, ...customVilles])].sort((a, b) => a.localeCompare(b, "fr"));
+  }, [leads, customVilles]);
+  const verticales = useMemo(() => {
+    const fromLeads = leads.map((l) => l.verticale).filter(Boolean);
+    const customNames = customVerticales.map((v) => v.name);
+    return [...new Set([...fromLeads, ...customNames])].sort((a, b) => a.localeCompare(b, "fr"));
+  }, [leads, customVerticales]);
 
   // Filter + sort
   const filteredLeads = useMemo(() => {
