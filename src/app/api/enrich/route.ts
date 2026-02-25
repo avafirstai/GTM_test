@@ -165,7 +165,7 @@ export async function POST(request: Request) {
   // Build query for leads needing enrichment (no email)
   let query = supabase
     .from("gtm_leads")
-    .select("id, name, website, email, city, category")
+    .select("id, name, website, email, city, category, enrichment_attempts")
     .or("email.is.null,email.eq.")
     .limit(limit);
 
@@ -219,6 +219,10 @@ export async function POST(request: Request) {
 
         // Skip techniques that require a website if the lead has none
         if (!lead.website) {
+          await supabase
+            .from("gtm_leads")
+            .update({ enrichment_status: "failed" })
+            .eq("id", lead.id);
           return {
             leadId: lead.id,
             name: lead.name || "",
@@ -237,10 +241,15 @@ export async function POST(request: Request) {
         }
 
         if (email) {
-          // Update the lead in Supabase
+          // Persist email + enrichment status to Supabase
           const { error: updateError } = await supabase
             .from("gtm_leads")
-            .update({ email })
+            .update({
+              email,
+              enrichment_status: "enriched",
+              enrichment_source: source,
+              enriched_at: new Date().toISOString(),
+            })
             .eq("id", lead.id);
 
           if (updateError) {
@@ -255,6 +264,17 @@ export async function POST(request: Request) {
 
           return { leadId: lead.id, name: lead.name || "", email, source };
         }
+
+        // No email found — mark as failed so we don't re-process endlessly
+        await supabase
+          .from("gtm_leads")
+          .update({
+            enrichment_status: "failed",
+            enrichment_attempts: (lead as Record<string, unknown>).enrichment_attempts
+              ? Number((lead as Record<string, unknown>).enrichment_attempts) + 1
+              : 1,
+          })
+          .eq("id", lead.id);
 
         return {
           leadId: lead.id,

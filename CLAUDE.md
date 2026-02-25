@@ -463,3 +463,25 @@ npm run build                       # Doit passer clean
 - [ ] Pas de fichiers temporaires
 - [ ] Le commit message est descriptif et conventionnel
 - [ ] Chaque ligne changee a une raison d'exister
+
+---
+
+## Regles Critiques de Persistence (TOUJOURS verifier)
+
+### Enrichissement → DB
+Toute route qui enrichit un lead DOIT persister en DB :
+- **Succes** : `email` + `enrichment_status = "enriched"` + `enriched_at` + `enrichment_source`
+- **Echec** : `enrichment_status = "failed"` + `enrichment_attempts` incremente
+- **Skip** : `enrichment_status = "failed"` (pas de website, etc.)
+- JAMAIS ecrire `email` sans ecrire `enrichment_status` — sinon au refresh l'UI perd le statut
+
+### Donnees Supabase → Frontend
+- Les `id` de Supabase sont des **integers** (pas des strings) — toujours `String(id)` pour `localeCompare`
+- `api.email || ""` rend les emails vides falsy — c'est le comportement voulu
+- `cache: "no-store"` est obligatoire sur `/api/leads` pour voir les donnees fraiches
+- Le tri deterministe necessite `.order("id", { ascending: true })` comme tiebreaker en DB
+
+### UI → Feedback Immediat + Persistence
+- L'UI montre le resultat local (`enrichResults` state) immediatement apres enrichissement
+- Mais les donnees DOIVENT aussi etre en DB pour survivre au refresh
+- Les colonnes Email et Enrichi checkent `enrichResults[lead.id]` EN PLUS de `lead.email` / `lead.enrichment_status`
