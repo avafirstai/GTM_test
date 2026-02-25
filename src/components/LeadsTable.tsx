@@ -351,11 +351,19 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
     if (leadsToExport.length === 0) return;
     setBulkAction("exporting");
 
-    const headers = ["Entreprise", "Ville", "Verticale", "Email", "Email Dirigeant", "Dirigeant", "Telephone", "Site Web", "Score", "Adresse"];
-    const rows = leadsToExport.map((l) => [
-      l.nom_entreprise, l.ville, l.verticale, l.email, l.email_dirigeant || "",
-      l.dirigeant || "", l.telephone, l.site_web, String(l.score), l.adresse,
-    ]);
+    const headers = ["Entreprise", "Ville", "Verticale", "Email", "Emails Dirigeants", "Dirigeants", "Dirigeants Detail", "Telephone", "Site Web", "Score", "Adresse"];
+    const rows = leadsToExport.map((l) => {
+      const dms = l.decision_makers.filter((d) => d.name || d.email);
+      return [
+        l.nom_entreprise, l.ville, l.verticale, l.email,
+        dms.filter((d) => d.email).map((d) => d.email).join("; ") || l.email_dirigeant || "",
+        dms.filter((d) => d.name).map((d) => d.name).join("; ") || l.dirigeant || "",
+        dms.length > 0
+          ? dms.map((d) => d.name && d.email ? `${d.name} <${d.email}>` : (d.name || d.email)).join("; ")
+          : (l.dirigeant && l.email_dirigeant ? `${l.dirigeant} <${l.email_dirigeant}>` : ""),
+        l.telephone, l.site_web, String(l.score), l.adresse,
+      ];
+    });
 
     const csvContent = [
       headers.join(","),
@@ -885,21 +893,44 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
                   <td className="px-3 py-3">
                     {(() => {
                       const localResult = enrichResults[lead.id];
-                      // Email dirigeant = personal email of the decision-maker
+                      // Multi-DM: prefer decision_makers array from DB
+                      const dms = lead.decision_makers.filter((dm) => dm.email);
+
+                      if (dms.length > 0) {
+                        const show = dms.slice(0, 3);
+                        const extra = dms.length - 3;
+                        return (
+                          <div className="flex flex-col gap-0.5">
+                            {show.map((dm, i) => (
+                              <span
+                                key={`${lead.id}-dme-${i}`}
+                                className="text-xs font-medium truncate max-w-[180px]"
+                                style={{ color: "var(--accent-hover)" }}
+                                title={`${dm.name} — ${dm.email}`}
+                              >
+                                {dm.email}
+                              </span>
+                            ))}
+                            {extra > 0 && (
+                              <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+                                +{extra} autre{extra > 1 ? "s" : ""}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      }
+
+                      // Fallback: scalar (backward compat + single enrichment)
                       const dirEmail = localResult?.emailDirigeant || lead.email_dirigeant;
                       if (dirEmail) {
                         return (
                           <span className="text-xs font-medium" style={{ color: "var(--accent-hover)" }} title={dirEmail}>
-                            {dirEmail.length > 25
-                              ? dirEmail.substring(0, 22) + "..."
-                              : dirEmail}
+                            {dirEmail.length > 25 ? dirEmail.substring(0, 22) + "..." : dirEmail}
                           </span>
                         );
                       }
                       return (
-                        <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-                          —
-                        </span>
+                        <span className="text-xs" style={{ color: "var(--text-muted)" }}>—</span>
                       );
                     })()}
                   </td>

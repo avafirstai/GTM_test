@@ -115,6 +115,9 @@ export async function POST(request: Request) {
     if (result.dirigeant) updateData.dirigeant = result.dirigeant;
     if (result.dirigeantLinkedin) updateData.dirigeant_linkedin = result.dirigeantLinkedin;
     if (result.mxProvider) updateData.mx_provider = result.mxProvider;
+    if (result.decisionMakers && result.decisionMakers.length > 0) {
+      updateData.decision_makers = result.decisionMakers;
+    }
 
     // Await DB write — guarantee persistence before responding
     const { error: updateError } = await supabase
@@ -139,6 +142,7 @@ export async function POST(request: Request) {
       confidence: result.finalConfidence,
       sourcesTried: result.sourcesTried,
       durationMs: result.durationMs,
+      decisionMakers: result.decisionMakers ?? [],
     });
   } catch (err) {
     // Waterfall threw — mark as failed (await to guarantee persistence)
