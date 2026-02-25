@@ -11,6 +11,7 @@ import type {
   WaterfallConfig,
   EnrichmentPipelineResult,
 } from "@/lib/enrichment";
+import { parseExistingDecisionMakers, mergeDecisionMakers } from "@/lib/enrichment/merge-utils";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // 5 min for large batches
@@ -97,7 +98,7 @@ export async function POST(request: Request) {
 
   let query = supabase
     .from("gtm_leads")
-    .select("id, name, website, email, phone, city, category, score, enrichment_attempts")
+    .select("id, name, website, email, phone, city, category, score, enrichment_attempts, decision_makers, email_dirigeant, dirigeant, dirigeant_linkedin")
     .not("website", "is", null)
     .neq("website", "")
     .limit(limit);
@@ -430,8 +431,13 @@ export async function POST(request: Request) {
 
             // Determine enrichment outcome
             const foundSomething = !!(result.bestEmail || result.bestPhone || result.siret || result.dirigeant);
-            const currentAttempts2 = (leads.find((l) => l.id === result.leadId) as Record<string, unknown>)?.enrichment_attempts;
+            const existingLead = leads.find((l) => l.id === result.leadId) as Record<string, unknown> | undefined;
+            const currentAttempts2 = existingLead?.enrichment_attempts;
             const attempts2 = (typeof currentAttempts2 === "number" ? currentAttempts2 : 0) + 1;
+
+            // Merge new DMs with existing ones from DB (preserve & deduplicate)
+            const existingDMs = parseExistingDecisionMakers(existingLead?.decision_makers);
+            const mergedDMs = mergeDecisionMakers(existingDMs, result.decisionMakers ?? []);
 
             if (foundSomething) {
               enrichedCount++;
@@ -448,14 +454,28 @@ export async function POST(request: Request) {
               if (result.bestEmail) updateData.email = result.bestEmail;
               if (result.bestPhone) updateData.phone = result.bestPhone;
               if (result.siret) updateData.siret = result.siret;
-              if (result.dirigeant) updateData.dirigeant = result.dirigeant;
-              if (result.dirigeantLinkedin) updateData.dirigeant_linkedin = result.dirigeantLinkedin;
+              // Preserve existing dirigeant scalars if waterfall found nothing new
+              if (result.dirigeant) {
+                updateData.dirigeant = result.dirigeant;
+              } else if (existingLead?.dirigeant) {
+                updateData.dirigeant = existingLead.dirigeant;
+              }
+              if (result.dirigeantLinkedin) {
+                updateData.dirigeant_linkedin = result.dirigeantLinkedin;
+              } else if (existingLead?.dirigeant_linkedin) {
+                updateData.dirigeant_linkedin = existingLead.dirigeant_linkedin;
+              }
               if (result.emailGlobal) updateData.email_global = result.emailGlobal;
-              if (result.emailDirigeant) updateData.email_dirigeant = result.emailDirigeant;
+              if (result.emailDirigeant) {
+                updateData.email_dirigeant = result.emailDirigeant;
+              } else if (existingLead?.email_dirigeant) {
+                updateData.email_dirigeant = existingLead.email_dirigeant;
+              }
               if (result.mxProvider) updateData.mx_provider = result.mxProvider;
               updateData.has_mx = result.hasMx;
-              if (result.decisionMakers && result.decisionMakers.length > 0) {
-                updateData.decision_makers = result.decisionMakers;
+              // ALWAYS write merged DMs (merged ≥ existing, never loses data)
+              if (mergedDMs.length > 0) {
+                updateData.decision_makers = mergedDMs;
               }
 
               const { error: dbErrEnrich } = await supabase
@@ -471,18 +491,33 @@ export async function POST(request: Request) {
                 });
               }
             } else {
-              // Nothing found — mark as failed
+              // Nothing found — mark as failed BUT preserve existing DM data
               failedCount++;
+
+              const failUpdateData: Record<string, unknown> = {
+                enrichment_status: existingDMs.length > 0 ? "enriched" : "failed",
+                enrichment_attempts: attempts2,
+                enrichment_failed_at: new Date().toISOString(),
+                enrichment_source: result.sourcesTried.join(","),
+                updated_at: new Date().toISOString(),
+              };
+              // Preserve existing DM data even when re-enrichment finds nothing
+              if (existingDMs.length > 0) {
+                failUpdateData.decision_makers = existingDMs;
+              }
+              if (existingLead?.email_dirigeant) {
+                failUpdateData.email_dirigeant = existingLead.email_dirigeant;
+              }
+              if (existingLead?.dirigeant) {
+                failUpdateData.dirigeant = existingLead.dirigeant;
+              }
+              if (existingLead?.dirigeant_linkedin) {
+                failUpdateData.dirigeant_linkedin = existingLead.dirigeant_linkedin;
+              }
 
               const { error: dbErrNone } = await supabase
                 .from("gtm_leads")
-                .update({
-                  enrichment_status: "failed",
-                  enrichment_attempts: attempts2,
-                  enrichment_failed_at: new Date().toISOString(),
-                  enrichment_source: result.sourcesTried.join(","),
-                  updated_at: new Date().toISOString(),
-                })
+                .update(failUpdateData)
                 .eq("id", result.leadId);
 
               if (dbErrNone) {

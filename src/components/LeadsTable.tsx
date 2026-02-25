@@ -362,7 +362,17 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
 
     const headers = ["Entreprise", "Ville", "Verticale", "Email", "Emails Dirigeants", "Dirigeants", "Dirigeants Detail", "Telephone", "Site Web", "Score", "Adresse"];
     const rows = leadsToExport.map((l) => {
-      const dms = l.decision_makers.filter((d) => d.name || d.email);
+      let dms = l.decision_makers.filter((d) => d.name || d.email);
+      // Safety net: synthesize virtual DM from scalar if array empty
+      if (dms.length === 0 && (l.email_dirigeant || l.dirigeant)) {
+        dms = [{
+          name: l.dirigeant || "",
+          title: "",
+          email: l.email_dirigeant || "",
+          linkedin_url: l.dirigeant_linkedin || "",
+          confidence: l.enrichment_confidence ?? 0,
+        }];
+      }
       return [
         l.nom_entreprise, l.ville, l.verticale, l.email,
         dms.filter((d) => d.email).map((d) => d.email).join("; ") || l.email_dirigeant || "",
@@ -903,7 +913,17 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
                     {(() => {
                       const localResult = enrichResults[lead.id];
                       // Multi-DM: prefer decision_makers array from DB
-                      const dms = lead.decision_makers.filter((dm) => dm.email);
+                      let dms = lead.decision_makers.filter((dm) => dm.email);
+                      // Safety net: synthesize virtual DM from scalar if array empty
+                      if (dms.length === 0 && lead.email_dirigeant) {
+                        dms = [{
+                          name: lead.dirigeant || "",
+                          title: "",
+                          email: lead.email_dirigeant,
+                          linkedin_url: lead.dirigeant_linkedin || "",
+                          confidence: lead.enrichment_confidence ?? 0,
+                        }];
+                      }
 
                       if (dms.length > 0) {
                         const show = dms.slice(0, 3);
