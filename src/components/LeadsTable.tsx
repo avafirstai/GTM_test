@@ -431,15 +431,15 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
   const handleBulkEnrich = useCallback(async () => {
     // Enrichir les leads sans email, dans l'ordre d'affichage (haut → bas)
     // filteredLeads est deja trie par score desc + id tiebreaker = ordre ecran
-    const leadsToEnrich = filteredLeads.filter((l) =>
-      selectedLeads.has(l.id) &&
-      !l.email &&
-      !enrichResults[l.id]?.email &&
-      !enrichResults[l.id]?.error &&
-      l.enrichment_status !== "enriched" &&
-      l.enrichment_status !== "failed" &&
-      l.enrichment_status !== "skipped"
-    );
+    // Ne traiter que les leads dont la colonne Enrichi affiche "—" (jamais tente)
+    const leadsToEnrich = filteredLeads.filter((l) => {
+      if (!selectedLeads.has(l.id)) return false;
+      const hasEmail = l.email || enrichResults[l.id]?.email;
+      if (hasEmail) return false; // Deja "✓ Oui"
+      if (enrichResults[l.id]?.error) return false; // Deja "✗ Tente" (session)
+      if (l.enrichment_status === "failed" || l.enrichment_status === "skipped") return false; // Deja "✗ Tente" (DB)
+      return true; // Colonne = "—" → a enrichir
+    });
     if (leadsToEnrich.length === 0) {
       setBulkMessage("Aucun lead sans email dans la selection");
       setBulkMessageType("error");
@@ -890,21 +890,20 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
                   </td>
                   <td className="px-3 py-3 text-center">
                     {(() => {
-                      // Check local enrichment results first (immediate feedback)
                       const localResult = enrichResults[lead.id];
-                      if (localResult?.email) {
-                        return <span className="text-xs font-medium" style={{ color: "var(--green)" }} title="Email trouve par enrichissement">✓ Oui</span>;
+                      const hasEmail = lead.email || localResult?.email;
+                      // Email exists (from DB, session, or any source) = enriched
+                      if (hasEmail) {
+                        return <span className="text-xs font-medium" style={{ color: "var(--green)" }} title="Email trouve">✓ Oui</span>;
                       }
+                      // Tried but no email found (session or DB)
                       if (localResult?.error) {
                         return <span className="text-xs font-medium" style={{ color: "#ef4444" }} title={localResult.error}>✗ Tente</span>;
-                      }
-                      // Fall back to DB status from props
-                      if (lead.enrichment_status === "enriched") {
-                        return <span className="text-xs font-medium" style={{ color: "var(--green)" }} title="Email/phone trouve par enrichissement">✓ Oui</span>;
                       }
                       if (lead.enrichment_status === "failed" || lead.enrichment_status === "skipped") {
                         return <span className="text-xs font-medium" style={{ color: "#ef4444" }} title="Enrichissement tente, rien trouve">✗ Tente</span>;
                       }
+                      // Never tried
                       return <span className="text-xs" style={{ color: "var(--text-muted)" }}>—</span>;
                     })()}
                   </td>
