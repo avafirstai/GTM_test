@@ -324,30 +324,32 @@ export async function runWaterfall(
         const smtpResult = await verifyEmailSmtp(result.email);
         if (smtpResult.smtpVerified) {
           result.metadata["smtp_verified"] = "true";
-        } else if (!smtpResult.valid) {
-          // Email is invalid — mark it and clear it
-          result.metadata["smtp_invalid"] = "true";
+        } else {
+          // NOT SMTP verified = not proven to exist → remove it
+          // This is strict but ensures 95%+ reliability
+          result.metadata["smtp_unverified"] = "true";
           console.log(
-            `[Waterfall] SMTP INVALID source=${source.name} email=*** — removing`,
+            `[Waterfall] SMTP NOT VERIFIED source=${source.name} — removing unverified email`,
           );
           result.email = null;
         }
         if (smtpResult.disposable) {
           result.metadata["disposable_email"] = "true";
+          result.email = null; // Never keep disposable emails
         }
       } catch {
-        // SMTP check failed — keep email as-is, no penalty
+        // SMTP check failed (API down, timeout) — keep email as-is
       }
     }
 
-    // Also verify DM emails found by this source
+    // Also verify DM emails found by this source — same strict rule
     if (result.dirigeants && source.name !== "email_permutation") {
       for (const dm of result.dirigeants) {
         if (dm.email) {
           try {
             const dmSmtp = await verifyEmailSmtp(dm.email);
-            if (!dmSmtp.valid) {
-              dm.email = null; // Remove invalid DM email
+            if (!dmSmtp.smtpVerified) {
+              dm.email = null; // Not SMTP verified → remove
             }
           } catch {
             // Keep email as-is on verification failure
