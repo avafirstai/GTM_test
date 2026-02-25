@@ -7,7 +7,7 @@ import type { EnrichmentLeadInput } from "@/lib/enrichment";
 import { parseExistingDecisionMakers, mergeDecisionMakers } from "@/lib/enrichment/merge-utils";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 120; // Single lead — 120s to guarantee full waterfall incl. Kaspr
+export const maxDuration = 300; // 5 min per lead — quality > speed, guarantee full waterfall incl. Kaspr
 
 /**
  * POST /api/enrich/v2/single — Waterfall enrichment for ONE lead

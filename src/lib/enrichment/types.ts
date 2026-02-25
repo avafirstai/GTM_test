@@ -192,7 +192,7 @@ export const DEFAULT_WATERFALL_CONFIG: WaterfallConfig = {
   sources: DEFAULT_SOURCES,
   stopOnConfidence: 80,
   maxSources: 8,
-  timeoutPerSource: 60_000,
+  timeoutPerSource: 300_000, // 5 min per source — quality > speed
   useKaspr: true,
   minScoreForPaid: 30,
 };
