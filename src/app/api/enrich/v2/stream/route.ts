@@ -304,6 +304,19 @@ export async function POST(request: Request) {
             });
           }
 
+          // PROTECTION CRASH : marquer le batch comme "failed" AVANT le waterfall
+          // Si le process crash, ces leads ne seront PAS re-enrichis (ils ne sont plus "pending")
+          // Si le waterfall reussit, on ecrasera "failed" par "enriched" plus bas
+          const batchIds = batch.map((l) => l.id);
+          await supabase
+            .from("gtm_leads")
+            .update({
+              enrichment_status: "failed",
+              enrichment_failed_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            })
+            .in("id", batchIds);
+
           const batchResults = await Promise.allSettled(
             batch.map((lead) => enrichWithTimeout(lead, config)),
           );
@@ -321,7 +334,7 @@ export async function POST(request: Request) {
                 ? settled.reason.message
                 : "Unknown error";
               const isTimeout = errMsg === "LEAD_TIMEOUT";
-              const newStatus = isTimeout ? "skipped" : "failed";
+              const newStatus = "failed"; // Timeout ou erreur = failed, on ne re-enrichit pas
 
               if (isTimeout) {
                 skippedCount++;

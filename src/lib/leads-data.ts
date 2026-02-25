@@ -55,6 +55,7 @@ export interface LeadFilters {
   scoreMax: number;
   hasEmail: "all" | "yes" | "no";
   source: string;
+  enrichmentStatus: "all" | "enriched" | "failed" | "pending";
 }
 
 // API response from /api/leads — includes all enrichment columns from Supabase

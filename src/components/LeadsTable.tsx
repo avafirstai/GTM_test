@@ -169,6 +169,7 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
     scoreMax: 100,
     hasEmail: "all",
     source: "",
+    enrichmentStatus: "all",
     ...initialFilters,
   });
   const [sortField, setSortField] = useState<SortField>("score");
@@ -307,6 +308,14 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
     if (filters.hasEmail === "no") result = result.filter((l) => !l.email);
     if (filters.scoreMin > 0) result = result.filter((l) => l.score >= filters.scoreMin);
     if (filters.scoreMax < 100) result = result.filter((l) => l.score <= filters.scoreMax);
+    if (filters.enrichmentStatus !== "all") {
+      if (filters.enrichmentStatus === "failed") {
+        // "failed" inclut aussi les anciens "skipped"
+        result = result.filter((l) => l.enrichment_status === "failed" || l.enrichment_status === "skipped");
+      } else {
+        result = result.filter((l) => l.enrichment_status === filters.enrichmentStatus);
+      }
+    }
 
     result = [...result].sort((a, b) => {
       const aVal = a[sortField];
@@ -537,6 +546,23 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
           <option value="all">Email: Tous</option>
           <option value="yes">Avec email</option>
           <option value="no">Sans email</option>
+        </select>
+        <select
+          value={filters.enrichmentStatus}
+          onChange={(e) =>
+            setFilters({ ...filters, enrichmentStatus: e.target.value as "all" | "enriched" | "failed" | "pending" })
+          }
+          className="px-3 py-2 rounded-lg text-sm"
+          style={{
+            background: "var(--bg)",
+            border: "1px solid var(--border)",
+            color: "var(--text-primary)",
+          }}
+        >
+          <option value="all">Enrichi: Tous</option>
+          <option value="enriched">✓ Oui (enrichis)</option>
+          <option value="failed">✗ Tente (rien trouve)</option>
+          <option value="pending">— Non tente</option>
         </select>
       </div>
 
@@ -771,15 +797,11 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
                   </td>
                   <td className="px-3 py-3 text-center">
                     {lead.enrichment_status === "enriched" ? (
-                      <span style={{ color: "var(--green)" }} title="Enrichi">&#10003;</span>
-                    ) : lead.enrichment_status === "failed" && (lead.telephone || lead.email) ? (
-                      <span style={{ color: "#f59e0b" }} title="Partiel — donnees existantes, rien de nouveau">&#126;</span>
-                    ) : lead.enrichment_status === "failed" ? (
-                      <span style={{ color: "#ef4444" }} title="Aucune donnee trouvee">&#10007;</span>
-                    ) : lead.enrichment_status === "skipped" ? (
-                      <span style={{ color: "#f59e0b" }} title="Timeout / skip">&#x23F1;</span>
+                      <span className="text-xs font-medium" style={{ color: "var(--green)" }} title="Email/phone trouve par enrichissement">✓ Oui</span>
+                    ) : lead.enrichment_status === "failed" || lead.enrichment_status === "skipped" ? (
+                      <span className="text-xs font-medium" style={{ color: "#ef4444" }} title="Enrichissement tente, rien trouve">✗ Tente</span>
                     ) : (
-                      <span style={{ color: "var(--text-muted)" }}>&mdash;</span>
+                      <span className="text-xs" style={{ color: "var(--text-muted)" }}>—</span>
                     )}
                   </td>
                 </tr>
