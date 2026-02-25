@@ -254,7 +254,11 @@ export async function runWaterfall(
     }
 
     if (!result) {
-      console.log(`[Waterfall] source=${source.name} result=null (timeout or error) duration=${Date.now() - sourceStart}ms`);
+      const elapsed = Date.now() - sourceStart;
+      const isTimeout = elapsed >= config.timeoutPerSource * 0.9;
+      console.log(
+        `[Waterfall] source=${source.name} result=null reason=${isTimeout ? "TIMEOUT" : "error"} duration=${elapsed}ms timeout=${config.timeoutPerSource}ms`,
+      );
       continue;
     }
 
@@ -282,8 +286,18 @@ export async function runWaterfall(
     // --- Early stop: confidence threshold reached ---
     const aggregateConfidence = computeAggregateConfidence(allResults);
     if (aggregateConfidence >= config.stopOnConfidence) {
-      console.log(`[Waterfall] EARLY STOP confidence=${aggregateConfidence}>=${config.stopOnConfidence}`);
-      break;
+      // Never early-stop before the free sources have all run
+      // dns_intel (1), schema_org (2), deep_scrape (3) MUST all execute
+      // They build the context (emails, dirigeants, phones) that paid sources need
+      const MIN_SOURCES_BEFORE_EARLY_STOP = 3;
+      if (sourcesTried.length < MIN_SOURCES_BEFORE_EARLY_STOP) {
+        console.log(
+          `[Waterfall] SKIP early-stop: confidence=${aggregateConfidence} but only ${sourcesTried.length}/${MIN_SOURCES_BEFORE_EARLY_STOP} free sources tried`,
+        );
+      } else {
+        console.log(`[Waterfall] EARLY STOP confidence=${aggregateConfidence}>=${config.stopOnConfidence}`);
+        break;
+      }
     }
   }
 

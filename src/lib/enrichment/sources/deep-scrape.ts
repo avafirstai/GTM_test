@@ -88,7 +88,7 @@ const EXCLUDED_PREFIXES = [
 async function fetchPage(url: string): Promise<string | null> {
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
+    const timeout = setTimeout(() => controller.abort(), 6000);
 
     const resp = await fetch(url, {
       signal: controller.signal,
@@ -209,35 +209,81 @@ function extractPhones(html: string): string[] {
 
 /** Titles that indicate a dirigeant / decision-maker in French */
 const DIRIGEANT_TITLE_REGEX =
-  /(?:g[ée]rant|fondateur|fondatrice|directeur|directrice|pr[ée]sident|CEO|PDG|dirigeant|co-fondateur|co-fondatrice|managing\s+director|owner|propri[ée]taire)/i;
+  /(?:g[ée]rant[e]?|fondateur|fondatrice|directeur|directrice|pr[ée]sident[e]?|CEO|PDG|DG|DGA|dirigeant[e]?|co-fondateur|co-fondatrice|co-g[ée]rant[e]?|managing\s+director|owner|propri[ée]taire|associ[ée][e]?|chef\s+d['']entreprise|responsable)/i;
+
+/** French name regex pattern — reused across strategies */
+const FRENCH_NAME_PATTERN = /[A-ZÀ-ÖÙ-Ü][a-zà-öù-ü]+(?:\s+[A-ZÀ-ÖÙ-Ü][a-zà-öù-ü]+){1,3}/;
+
+/** Common French non-name phrases to exclude */
+const NON_NAME_PHRASES = [
+  "notre equipe", "mentions legales", "tous droits", "politique de",
+  "conditions generales", "protection des", "a propos", "qui sommes",
+  "nos services", "nos produits", "nos clients", "notre histoire",
+  "en savoir", "lire la", "voir plus", "accueil contact",
+];
+
+/** Validate a candidate name: 2-4 words, reasonable length, not a common phrase */
+function isValidCandidateName(name: string): boolean {
+  const parts = name.split(/\s+/);
+  if (parts.length < 2 || parts.length > 4) return false;
+  if (name.length > 50 || name.length < 5) return false;
+  const lower = name.toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  return !NON_NAME_PHRASES.some((phrase) => lower.includes(phrase));
+}
 
 /**
  * Try to extract dirigeant name + title from an HTML team page.
- * Looks for patterns like:
- *   <h3>Jean Dupont</h3><p>Gérant</p>
- *   Jean Dupont - Fondateur
- *   "Jean Dupont, Président"
+ * Uses 3 strategies in order of reliability:
+ *   Strategy 0: HTML structure-aware (adjacent elements)
+ *   Strategy 1: Text-based "Name – Title" pattern
+ *   Strategy 2: Proximity search around title keywords
  */
 function extractDirigeantFromHtml(
   html: string,
 ): { name: string; title: string } | null {
-  // Strategy 1: Look for title keywords near person names
-  // Match patterns like "Name – Title" or "Name, Title"
-  const nameNearTitleRegex =
-    /([A-ZÀ-ÖÙ-Ü][a-zà-öù-ü]+(?:\s+[A-ZÀ-ÖÙ-Ü][a-zà-öù-ü]+){1,3})\s*[,\-–—|:]\s*((?:g[ée]rant|fondateur|fondatrice|directeur|directrice|pr[ée]sident|CEO|PDG|dirigeant|co-fondateur|co-fondatrice|managing\s+director|propri[ée]taire)[a-zé]*(?:\s+g[ée]n[ée]ral[e]?)?)/gi;
+  // --- Strategy 0: HTML structure-aware ---
+  // Many French sites structure teams as:
+  //   <h3>Jean Dupont</h3><p>Gérant</p>
+  //   <span class="name">Jean Dupont</span><span class="role">Fondateur</span>
+  // Look for pairs of adjacent HTML elements where one is a name and one is a title
+  const htmlPairRegex =
+    /<(?:h[1-6]|span|p|div|strong|b|em|li)[^>]*>\s*([^<]{3,50}?)\s*<\/(?:h[1-6]|span|p|div|strong|b|em|li)>\s*(?:<[^>]*>\s*)*<(?:h[1-6]|span|p|div|strong|b|em|li)[^>]*>\s*([^<]{3,80}?)\s*<\/(?:h[1-6]|span|p|div|strong|b|em|li)>/gi;
 
   let match: RegExpExecArray | null;
+  while ((match = htmlPairRegex.exec(html)) !== null) {
+    const text1 = match[1].trim();
+    const text2 = match[2].trim();
+
+    // Check if text1 is name + text2 is title
+    if (FRENCH_NAME_PATTERN.test(text1) && DIRIGEANT_TITLE_REGEX.test(text2)) {
+      if (isValidCandidateName(text1)) {
+        return { name: text1, title: text2.trim() };
+      }
+    }
+    // Check reverse: text1 is title + text2 is name
+    if (DIRIGEANT_TITLE_REGEX.test(text1) && FRENCH_NAME_PATTERN.test(text2)) {
+      if (isValidCandidateName(text2)) {
+        return { name: text2, title: text1.trim() };
+      }
+    }
+  }
+
+  // --- Strategy 1: Text-based "Name – Title" pattern ---
+  // Match patterns like "Name – Title", "Name, Title", "Name | Title"
+  const nameNearTitleRegex =
+    /([A-ZÀ-ÖÙ-Ü][a-zà-öù-ü]+(?:\s+[A-ZÀ-ÖÙ-Ü][a-zà-öù-ü]+){1,3})\s*[,\-–—|:]\s*((?:g[ée]rant[e]?|fondateur|fondatrice|directeur|directrice|pr[ée]sident[e]?|CEO|PDG|DG|DGA|dirigeant[e]?|co-fondateur|co-fondatrice|co-g[ée]rant[e]?|managing\s+director|propri[ée]taire|associ[ée][e]?|chef\s+d['']entreprise)[a-zéè]*(?:\s+g[ée]n[ée]ral[e]?)?)/gi;
+
   while ((match = nameNearTitleRegex.exec(html)) !== null) {
     const name = match[1].trim();
     const title = match[2].trim();
-    // Validate: name should have 2+ words and not be too long
-    const parts = name.split(/\s+/);
-    if (parts.length >= 2 && parts.length <= 4 && name.length <= 50) {
+    if (isValidCandidateName(name)) {
       return { name, title };
     }
   }
 
-  // Strategy 2: Find title keyword and look at nearby text for names
+  // --- Strategy 2: Proximity search around title keywords ---
   // Strip HTML tags first
   const textOnly = html
     .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
@@ -245,31 +291,22 @@ function extractDirigeantFromHtml(
     .replace(/<[^>]+>/g, " ")
     .replace(/\s+/g, " ");
 
-  const titleMatch = DIRIGEANT_TITLE_REGEX.exec(textOnly);
-  if (titleMatch && titleMatch.index !== undefined) {
-    // Look 100 chars before and after the title keyword
-    const start = Math.max(0, titleMatch.index - 100);
-    const end = Math.min(textOnly.length, titleMatch.index + 100);
-    const context = textOnly.slice(start, end);
+  // Search for ALL occurrences of title keywords (not just first)
+  const globalTitleRegex = new RegExp(DIRIGEANT_TITLE_REGEX.source, "gi");
+  let titleMatch: RegExpExecArray | null;
+  while ((titleMatch = globalTitleRegex.exec(textOnly)) !== null) {
+    // Look 200 chars before and after the title keyword
+    const start = Math.max(0, titleMatch.index - 200);
+    const end = Math.min(textOnly.length, titleMatch.index + 200);
+    const ctx = textOnly.slice(start, end);
 
     // Find a capitalized name near the title
     const nameRegex = /([A-ZÀ-ÖÙ-Ü][a-zà-öù-ü]+(?:\s+[A-ZÀ-ÖÙ-Ü][a-zà-öù-ü]+){1,2})/g;
     let nameMatch: RegExpExecArray | null;
-    while ((nameMatch = nameRegex.exec(context)) !== null) {
+    while ((nameMatch = nameRegex.exec(ctx)) !== null) {
       const candidateName = nameMatch[1].trim();
-      const parts = candidateName.split(/\s+/);
-      // Must be 2-3 words, not a common French phrase
-      if (parts.length >= 2 && parts.length <= 3 && candidateName.length <= 40) {
-        const lower = candidateName.toLowerCase();
-        // Exclude common non-name phrases
-        if (
-          !lower.includes("notre equipe") &&
-          !lower.includes("mentions legales") &&
-          !lower.includes("tous droits") &&
-          !lower.includes("politique de")
-        ) {
-          return { name: candidateName, title: titleMatch[0] };
-        }
+      if (isValidCandidateName(candidateName)) {
+        return { name: candidateName, title: titleMatch[0] };
       }
     }
   }
@@ -347,13 +384,15 @@ async function deepScrapeSource(
     allEmails.push(...extractEmails(html));
     allPhones.push(...extractPhones(html));
 
-    // Try to extract dirigeant from team/about pages (not homepage)
+    // Try to extract dirigeant from ALL pages (subpages first, homepage last)
+    // Skip homepage (i=0) in this loop — we try it as fallback below
     if (i > 0 && !foundDirigeant) {
       foundDirigeant = extractDirigeantFromHtml(html);
     }
   }
 
-  // Also check homepage for dirigeant if not found on subpages
+  // Fallback: check homepage for dirigeant if not found on subpages
+  // Homepage is less reliable (more noise) but better than nothing
   if (!foundDirigeant && htmlResults[0]?.status === "fulfilled" && htmlResults[0].value) {
     foundDirigeant = extractDirigeantFromHtml(htmlResults[0].value);
   }
