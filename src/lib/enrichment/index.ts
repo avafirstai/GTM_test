@@ -29,6 +29,7 @@ export type {
   EnrichmentContext,
   EnrichmentSource,
   EnrichmentSourceFn,
+  EnrichedEmail,
   WaterfallConfig,
 } from "./types";
 export {

@@ -37,6 +37,8 @@ export interface Lead {
   enrichment_source: string | null;
   enrichment_confidence: number | null;
   enriched_at: string | null;
+  /** All emails found during enrichment with full provenance */
+  enrichment_emails: EnrichedEmailData[];
 }
 
 export interface DecisionMaker {
@@ -45,6 +47,21 @@ export interface DecisionMaker {
   email: string;
   linkedin_url: string;
   confidence: number;
+}
+
+/** Full provenance for a single email discovered during enrichment */
+export interface EnrichedEmailData {
+  email: string;
+  /** Which enrichment source found this email */
+  source: string;
+  /** Confidence score 0-100 */
+  confidence: number;
+  /** global = company-wide (contact@), dirigeant = personal, unknown = unclassified */
+  type: "global" | "dirigeant" | "unknown";
+  /** Whether this was selected as the best email */
+  isBest: boolean;
+  /** Name of the person this email belongs to (if known) */
+  personName: string | null;
 }
 
 export type SortField = "nom_entreprise" | "ville" | "score" | "date_scraping";
@@ -94,6 +111,7 @@ interface ApiLead {
   email_global: string | null;
   email_dirigeant: string | null;
   decision_makers: unknown;
+  enrichment_emails: unknown;
 }
 
 /**
@@ -111,6 +129,24 @@ function parseDecisionMakers(raw: unknown): DecisionMaker[] {
       confidence: typeof d.confidence === "number" ? d.confidence : 0,
     }))
     .filter((d) => d.name.length > 0);
+}
+
+/**
+ * Safely parse enrichment_emails JSONB from Supabase into typed array.
+ */
+function parseEnrichmentEmails(raw: unknown): EnrichedEmailData[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((d): d is Record<string, unknown> => d !== null && typeof d === "object")
+    .map((d) => ({
+      email: typeof d.email === "string" ? d.email : "",
+      source: typeof d.source === "string" ? d.source : "",
+      confidence: typeof d.confidence === "number" ? d.confidence : 0,
+      type: (d.type === "global" || d.type === "dirigeant" || d.type === "unknown") ? d.type as "global" | "dirigeant" | "unknown" : "unknown" as const,
+      isBest: typeof d.isBest === "boolean" ? d.isBest : false,
+      personName: typeof d.personName === "string" ? d.personName : null,
+    }))
+    .filter((d) => d.email.length > 0);
 }
 
 interface LeadsApiResponse {
@@ -173,6 +209,7 @@ function mapApiLeadToLead(api: ApiLead): Lead {
     enrichment_source: api.enrichment_source ?? null,
     enrichment_confidence: api.enrichment_confidence ?? null,
     enriched_at: api.enriched_at ?? null,
+    enrichment_emails: parseEnrichmentEmails(api.enrichment_emails),
   };
 }
 

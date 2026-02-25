@@ -50,6 +50,25 @@ export interface EnrichmentResult {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Enriched Email (per-email provenance)                              */
+/* ------------------------------------------------------------------ */
+
+/** A single email discovered during enrichment, with full provenance */
+export interface EnrichedEmail {
+  email: string;
+  /** Which enrichment source found this email */
+  source: string;
+  /** Confidence score 0-100 */
+  confidence: number;
+  /** "global" (contact@, info@) | "dirigeant" (personal) | "unknown" */
+  type: "global" | "dirigeant" | "unknown";
+  /** Is this the one selected as bestEmail? */
+  isBest: boolean;
+  /** Name of the person this email belongs to (if known) */
+  personName: string | null;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Decision Maker (per-person data)                                   */
 /* ------------------------------------------------------------------ */
 
@@ -123,6 +142,8 @@ export interface EnrichmentPipelineResult {
   durationMs: number;
   /** All decision-makers found across sources with their emails/phones/LinkedIn */
   decisionMakers: DecisionMakerData[];
+  /** ALL emails found with full provenance (source, confidence, type) */
+  enrichmentEmails: EnrichedEmail[];
 }
 
 /* ------------------------------------------------------------------ */

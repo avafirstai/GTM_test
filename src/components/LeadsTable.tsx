@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
 import { ChevronDown, X, Loader2, Linkedin, Mail as MailIcon, Shield, MapPin, Copy, Check } from "lucide-react";
-import type { Lead, DecisionMaker, SortField, SortDirection, LeadFilters } from "@/lib/leads-data";
+import type { Lead, DecisionMaker, EnrichedEmailData, SortField, SortDirection, LeadFilters } from "@/lib/leads-data";
 import { useCustomData } from "@/lib/useCustomData";
 
 interface LeadsTableProps {
@@ -1106,13 +1106,93 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
                                   )}
                                   {er?.phone && (
                                     <p>
-                                      <span style={{ color: "var(--text-muted)" }}>Tél dirigeant:</span>{" "}
+                                      <span style={{ color: "var(--text-muted)" }}>Tel dirigeant:</span>{" "}
                                       {er.phone}
                                     </p>
                                   )}
                                 </div>
                               );
                             })()}
+                            {/* Email provenance — ALL emails found with source badges */}
+                            {lead.enrichment_emails.length > 0 && (
+                              <div className="mt-2 pt-2" style={{ borderTop: "1px solid var(--border)" }}>
+                                <p className="text-[10px] font-semibold uppercase tracking-wide mb-1.5" style={{ color: "var(--text-muted)" }}>
+                                  Emails trouves ({lead.enrichment_emails.length})
+                                </p>
+                                <div className="space-y-1">
+                                  {lead.enrichment_emails.map((ee, eeIdx) => (
+                                    <div
+                                      key={`${lead.id}-ee-${eeIdx}`}
+                                      className="flex items-center gap-1.5 text-xs"
+                                    >
+                                      {/* Best indicator */}
+                                      {ee.isBest && (
+                                        <span title="Meilleur email" style={{ color: "var(--green)", fontSize: "10px" }}>★</span>
+                                      )}
+                                      {/* Email (clickable to copy) */}
+                                      <button
+                                        type="button"
+                                        className="hover:underline cursor-pointer truncate max-w-[180px]"
+                                        style={{
+                                          color: ee.type === "dirigeant" ? "var(--accent-hover)" : ee.type === "global" ? "var(--green)" : "var(--text-secondary)",
+                                          background: "none",
+                                          border: "none",
+                                          padding: 0,
+                                          textAlign: "left",
+                                        }}
+                                        title={`Copier: ${ee.email}`}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          navigator.clipboard.writeText(ee.email).catch(() => {/* silent */});
+                                        }}
+                                      >
+                                        {ee.email}
+                                      </button>
+                                      {/* Type badge */}
+                                      <span
+                                        className="text-[9px] px-1.5 py-0.5 rounded-full shrink-0"
+                                        style={{
+                                          background: ee.type === "dirigeant"
+                                            ? "rgba(99,102,241,0.12)"
+                                            : ee.type === "global"
+                                              ? "rgba(34,197,94,0.12)"
+                                              : "rgba(115,115,115,0.12)",
+                                          color: ee.type === "dirigeant"
+                                            ? "#818cf8"
+                                            : ee.type === "global"
+                                              ? "#22c55e"
+                                              : "#737373",
+                                        }}
+                                      >
+                                        {ee.type === "dirigeant" ? "perso" : ee.type === "global" ? "generique" : "autre"}
+                                      </span>
+                                      {/* Source badge */}
+                                      <span
+                                        className="text-[9px] px-1.5 py-0.5 rounded-full shrink-0"
+                                        style={{ background: "rgba(115,115,115,0.10)", color: "var(--text-muted)" }}
+                                      >
+                                        {ee.source}
+                                      </span>
+                                      {/* Confidence */}
+                                      <span
+                                        className="text-[9px] shrink-0"
+                                        style={{
+                                          color: ee.confidence >= 70 ? "#22c55e" : ee.confidence >= 40 ? "#f59e0b" : "#737373",
+                                        }}
+                                      >
+                                        {ee.confidence}%
+                                      </span>
+                                      {/* Person name if known */}
+                                      {ee.personName && (
+                                        <span className="text-[9px] truncate max-w-[80px]" style={{ color: "var(--text-muted)" }} title={ee.personName}>
+                                          ({ee.personName})
+                                        </span>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
                           </div>
                         </div>
                         {/* Pitch */}

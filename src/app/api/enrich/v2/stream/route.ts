@@ -477,6 +477,10 @@ export async function POST(request: Request) {
               if (mergedDMs.length > 0) {
                 updateData.decision_makers = mergedDMs;
               }
+              // Save full email provenance array
+              if (result.enrichmentEmails && result.enrichmentEmails.length > 0) {
+                updateData.enrichment_emails = result.enrichmentEmails;
+              }
 
               const { error: dbErrEnrich } = await supabase
                 .from("gtm_leads")
@@ -543,6 +547,7 @@ export async function POST(request: Request) {
               confidence: result.finalConfidence,
               sourcesTried: result.sourcesTried,
               decisionMakers: result.decisionMakers ?? [],
+              enrichmentEmails: result.enrichmentEmails ?? [],
             });
 
             // Emit progress after each lead

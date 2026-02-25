@@ -12,6 +12,7 @@ import type {
   EnrichmentContext,
   EnrichmentPipelineResult,
   EnrichmentSourceFn,
+  EnrichedEmail,
   WaterfallConfig,
 } from "./types";
 import { DEFAULT_WATERFALL_CONFIG } from "./types";
@@ -370,8 +371,19 @@ export async function runWaterfall(
   // bestEmail = best overall (prefer dirigeant > global for outreach)
   const bestEmail = emailDirigeant ?? emailGlobal ?? bestEmailResult?.email ?? null;
 
+  // --- Build enrichmentEmails: full provenance for EVERY email found ---
+  const enrichmentEmails = buildEnrichmentEmails(
+    allResults,
+    context.accumulated.decisionMakers,
+    bestEmail,
+    emailGlobal,
+    emailDirigeant,
+    context.accumulated.dirigeantFirstName,
+    context.accumulated.dirigeantLastName,
+  );
+
   console.log(
-    `[Waterfall] DONE leadId=${lead.id} bestEmail=${bestEmail ?? "null"} emailGlobal=${emailGlobal ?? "null"} emailDirigeant=${emailDirigeant ?? "null"} bestPhone=${bestPhone ?? "null"} dirigeant=${context.accumulated.dirigeant ?? "null"} sources=[${sourcesTried.join(",")}] confidence=${finalConfidence} duration=${Date.now() - startTime}ms`,
+    `[Waterfall] DONE leadId=${lead.id} bestEmail=${bestEmail ?? "null"} emailGlobal=${emailGlobal ?? "null"} emailDirigeant=${emailDirigeant ?? "null"} bestPhone=${bestPhone ?? "null"} dirigeant=${context.accumulated.dirigeant ?? "null"} emails_found=${enrichmentEmails.length} sources=[${sourcesTried.join(",")}] confidence=${finalConfidence} duration=${Date.now() - startTime}ms`,
   );
 
   return {
@@ -390,12 +402,120 @@ export async function runWaterfall(
     sourcesTried,
     durationMs: Date.now() - startTime,
     decisionMakers: context.accumulated.decisionMakers,
+    enrichmentEmails,
   };
 }
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
+
+/**
+ * Build the full enrichmentEmails array with provenance for every email discovered.
+ * Deduplicates by email address (keeps highest-confidence entry per email).
+ * Classifies each as global/dirigeant/unknown and marks the bestEmail.
+ */
+function buildEnrichmentEmails(
+  allResults: EnrichmentResult[],
+  decisionMakers: Array<{ name: string; email: string | null; source: string; confidence: number }>,
+  bestEmail: string | null,
+  emailGlobal: string | null,
+  emailDirigeant: string | null,
+  firstName: string | null,
+  lastName: string | null,
+): EnrichedEmail[] {
+  // Map: lowercase email → best EnrichedEmail entry
+  const emailMap = new Map<string, EnrichedEmail>();
+
+  const normFirst = firstName?.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "") ?? "";
+  const normLast = lastName?.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "") ?? "";
+
+  function classifyType(email: string, source: string): "global" | "dirigeant" | "unknown" {
+    const lower = email.toLowerCase();
+    // Already classified by the pipeline
+    if (emailDirigeant && lower === emailDirigeant.toLowerCase()) return "dirigeant";
+    if (emailGlobal && lower === emailGlobal.toLowerCase()) return "global";
+
+    const prefix = lower.split("@")[0] ?? "";
+    if (GENERIC_PREFIXES.has(prefix)) return "global";
+
+    // Kaspr + email_permutation always target the dirigeant
+    if (source === "kaspr" || source === "email_permutation") return "dirigeant";
+
+    // Name match check
+    if (normFirst && normLast) {
+      const isNameMatch =
+        prefix === `${normFirst}.${normLast}` ||
+        prefix === `${normFirst[0]}.${normLast}` ||
+        prefix === `${normFirst}${normLast}` ||
+        prefix === `${normLast}.${normFirst}` ||
+        prefix === `${normLast}` ||
+        (prefix.includes(normFirst) && prefix.includes(normLast));
+      if (isNameMatch) return "dirigeant";
+    }
+
+    return "unknown";
+  }
+
+  function findPersonName(email: string): string | null {
+    const lower = email.toLowerCase();
+    for (const dm of decisionMakers) {
+      if (dm.email && dm.email.toLowerCase() === lower) return dm.name;
+    }
+    return null;
+  }
+
+  // 1. Emails from source results (scalar email per source)
+  for (const r of allResults) {
+    if (!r.email) continue;
+    const lower = r.email.toLowerCase();
+    const existing = emailMap.get(lower);
+    // Keep entry with highest confidence
+    if (!existing || r.confidence > existing.confidence) {
+      emailMap.set(lower, {
+        email: r.email.toLowerCase(),
+        source: r.source,
+        confidence: r.confidence,
+        type: classifyType(r.email, r.source),
+        isBest: false,
+        personName: findPersonName(r.email),
+      });
+    }
+  }
+
+  // 2. Emails from decision-makers (multi-DM mode — Kaspr, linkedin_search, etc.)
+  for (const dm of decisionMakers) {
+    if (!dm.email) continue;
+    const lower = dm.email.toLowerCase();
+    const existing = emailMap.get(lower);
+    if (!existing || dm.confidence > existing.confidence) {
+      emailMap.set(lower, {
+        email: dm.email.toLowerCase(),
+        source: dm.source,
+        confidence: dm.confidence,
+        type: "dirigeant",
+        isBest: false,
+        personName: dm.name,
+      });
+    }
+  }
+
+  // 3. Mark the bestEmail
+  if (bestEmail) {
+    const entry = emailMap.get(bestEmail.toLowerCase());
+    if (entry) entry.isBest = true;
+  }
+
+  // Sort: isBest first, then dirigeant > global > unknown, then by confidence desc
+  const typeOrder: Record<string, number> = { dirigeant: 0, global: 1, unknown: 2 };
+  return Array.from(emailMap.values()).sort((a, b) => {
+    if (a.isBest !== b.isBest) return a.isBest ? -1 : 1;
+    const typeA = typeOrder[a.type] ?? 3;
+    const typeB = typeOrder[b.type] ?? 3;
+    if (typeA !== typeB) return typeA - typeB;
+    return b.confidence - a.confidence;
+  });
+}
 
 /**
  * Generic email prefixes — company-wide, not personal.
