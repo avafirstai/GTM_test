@@ -289,7 +289,7 @@ export async function runWaterfall(
       // Never early-stop before the free sources have all run
       // dns_intel (1), schema_org (2), deep_scrape (3) MUST all execute
       // They build the context (emails, dirigeants, phones) that paid sources need
-      const MIN_SOURCES_BEFORE_EARLY_STOP = 5;
+      const MIN_SOURCES_BEFORE_EARLY_STOP = 7;
       if (sourcesTried.length < MIN_SOURCES_BEFORE_EARLY_STOP) {
         console.log(
           `[Waterfall] SKIP early-stop: confidence=${aggregateConfidence} but only ${sourcesTried.length}/${MIN_SOURCES_BEFORE_EARLY_STOP} free sources tried`,
