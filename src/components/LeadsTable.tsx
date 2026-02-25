@@ -467,9 +467,17 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
         if (data.success && data.results?.[0]?.email) {
           found++;
           setEnrichResults((prev) => ({ ...prev, [lead.id]: { email: data.results[0].email } }));
+        } else {
+          setEnrichResults((prev) => ({
+            ...prev,
+            [lead.id]: { error: data.results?.[0]?.error || "Aucun email trouve" },
+          }));
         }
       } catch {
-        // Erreur reseau — on continue avec les suivants
+        setEnrichResults((prev) => ({
+          ...prev,
+          [lead.id]: { error: "Erreur reseau" },
+        }));
       } finally {
         done++;
         // Retirer ce lead du set "en cours"
