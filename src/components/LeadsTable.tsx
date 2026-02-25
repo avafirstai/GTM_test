@@ -827,10 +827,13 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
                 Score <SortIcon field="score" />
               </th>
               <th className="px-3 py-3 text-left" style={{ color: "var(--text-muted)" }}>
-                Emails
+                Email
+              </th>
+              <th className="px-3 py-3 text-left" style={{ color: "var(--text-muted)" }}>
+                Email Dirigeant
               </th>
               <th className="px-3 py-3 text-center" style={{ color: "var(--text-muted)" }}>
-                Sources
+                Enrichi
               </th>
             </tr>
           </thead>
@@ -885,62 +888,77 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
                   <td className="px-3 py-3 text-center">
                     <ScoreBadge score={lead.score} />
                   </td>
-                  {/* === EMAILS column — ALL emails with provenance badges === */}
+                  {/* === EMAIL column — generic company email (contact@, info@) + source badge === */}
                   <td className="px-3 py-3">
                     {(() => {
-                      // Prefer enrichment_emails (full provenance) — fallback to legacy scalars
-                      const emails = lead.enrichment_emails;
-                      if (emails.length > 0) {
-                        const show = emails.slice(0, 3);
-                        const extra = emails.length - 3;
+                      const localResult = enrichResults[lead.id];
+                      // From enrichment_emails: pick first "global" type
+                      const globalFromEmails = lead.enrichment_emails.find((e) => e.type === "global");
+                      const displayEmail = globalFromEmails?.email || localResult?.emailGlobal || lead.email_global || lead.email || localResult?.email;
+                      const emailSource = globalFromEmails?.source || null;
+                      if (displayEmail) {
                         return (
-                          <div className="flex flex-col gap-1">
-                            {show.map((ee, i) => (
-                              <div key={`${lead.id}-em-${i}`} className="flex items-center gap-1">
-                                {/* Best star */}
-                                {ee.isBest && (
-                                  <span title="Meilleur email" className="text-[10px] shrink-0" style={{ color: "#f59e0b" }}>★</span>
-                                )}
-                                {/* Email text — click to copy */}
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              className="text-xs text-left hover:underline cursor-pointer truncate max-w-[180px]"
+                              style={{ color: "var(--green)", background: "none", border: "none", padding: 0 }}
+                              title={`Copier: ${displayEmail}`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                navigator.clipboard.writeText(displayEmail).catch(() => {/* silent */});
+                              }}
+                            >
+                              {displayEmail}
+                            </button>
+                            {emailSource && (
+                              <span
+                                className="text-[7px] px-1 py-px rounded shrink-0"
+                                style={{ background: "rgba(115,115,115,0.08)", color: "var(--text-muted)" }}
+                              >
+                                {emailSource}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      }
+                      return (
+                        <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+                          —
+                        </span>
+                      );
+                    })()}
+                  </td>
+                  {/* === EMAIL DIRIGEANT column — personal decision-maker emails + source badge === */}
+                  <td className="px-3 py-3">
+                    {(() => {
+                      const localResult = enrichResults[lead.id];
+                      // From enrichment_emails: pick all "dirigeant" type emails
+                      const dirEmails = lead.enrichment_emails.filter((e) => e.type === "dirigeant");
+                      if (dirEmails.length > 0) {
+                        const show = dirEmails.slice(0, 3);
+                        const extra = dirEmails.length - 3;
+                        return (
+                          <div className="flex flex-col gap-0.5">
+                            {show.map((de, i) => (
+                              <div key={`${lead.id}-de-${i}`} className="flex items-center gap-1">
                                 <button
                                   type="button"
-                                  className="text-xs text-left hover:underline cursor-pointer truncate max-w-[180px]"
-                                  style={{
-                                    color: ee.type === "dirigeant" ? "var(--accent-hover)" : "var(--green)",
-                                    background: "none", border: "none", padding: 0,
-                                  }}
-                                  title={`${ee.email} — ${ee.source} (${ee.confidence}%)${ee.personName ? ` — ${ee.personName}` : ""}`}
+                                  className="text-xs font-medium text-left hover:underline cursor-pointer truncate max-w-[180px]"
+                                  style={{ color: "var(--accent-hover)", background: "none", border: "none", padding: 0 }}
+                                  title={`${de.personName ? de.personName + " — " : ""}${de.email} (${de.source}, ${de.confidence}%)`}
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    navigator.clipboard.writeText(ee.email).catch(() => {/* silent */});
+                                    navigator.clipboard.writeText(de.email).catch(() => {/* silent */});
                                   }}
                                 >
-                                  {ee.email}
+                                  {de.email}
                                 </button>
-                                {/* Type pill */}
                                 <span
-                                  className="text-[8px] px-1 py-px rounded shrink-0 font-medium"
-                                  style={{
-                                    background: ee.type === "dirigeant"
-                                      ? "rgba(99,102,241,0.12)"
-                                      : ee.type === "global"
-                                        ? "rgba(34,197,94,0.12)"
-                                        : "rgba(115,115,115,0.10)",
-                                    color: ee.type === "dirigeant"
-                                      ? "#818cf8"
-                                      : ee.type === "global"
-                                        ? "#22c55e"
-                                        : "#737373",
-                                  }}
-                                >
-                                  {ee.type === "dirigeant" ? "perso" : ee.type === "global" ? "gen." : "?"}
-                                </span>
-                                {/* Source pill */}
-                                <span
-                                  className="text-[8px] px-1 py-px rounded shrink-0"
+                                  className="text-[7px] px-1 py-px rounded shrink-0"
                                   style={{ background: "rgba(115,115,115,0.08)", color: "var(--text-muted)" }}
                                 >
-                                  {ee.source}
+                                  {de.source}
                                 </span>
                               </div>
                             ))}
@@ -952,125 +970,102 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
                           </div>
                         );
                       }
-                      // Fallback: legacy email fields (leads enriched before this feature)
-                      const localResult = enrichResults[lead.id];
-                      const emailGlobal = localResult?.emailGlobal || lead.email_global || lead.email;
-                      const emailDir = localResult?.emailDirigeant || lead.email_dirigeant;
-                      const legacyEmails: Array<{ email: string; label: string; color: string }> = [];
-                      if (emailDir) legacyEmails.push({ email: emailDir, label: "perso", color: "var(--accent-hover)" });
-                      if (emailGlobal && emailGlobal !== emailDir) legacyEmails.push({ email: emailGlobal, label: "gen.", color: "var(--green)" });
-                      if (legacyEmails.length > 0) {
+                      // Fallback: legacy multi-DM from decision_makers array
+                      const dms = lead.decision_makers.filter((dm) => dm.email);
+                      if (dms.length > 0) {
+                        const show = dms.slice(0, 3);
+                        const extra = dms.length - 3;
                         return (
-                          <div className="flex flex-col gap-1">
-                            {legacyEmails.map((le, i) => (
-                              <div key={`${lead.id}-le-${i}`} className="flex items-center gap-1">
-                                <button
-                                  type="button"
-                                  className="text-xs text-left hover:underline cursor-pointer truncate max-w-[180px]"
-                                  style={{ color: le.color, background: "none", border: "none", padding: 0 }}
-                                  title={`Copier: ${le.email}`}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    navigator.clipboard.writeText(le.email).catch(() => {/* silent */});
-                                  }}
-                                >
-                                  {le.email}
-                                </button>
-                                <span
-                                  className="text-[8px] px-1 py-px rounded shrink-0 font-medium"
-                                  style={{
-                                    background: le.label === "perso" ? "rgba(99,102,241,0.12)" : "rgba(34,197,94,0.12)",
-                                    color: le.label === "perso" ? "#818cf8" : "#22c55e",
-                                  }}
-                                >
-                                  {le.label}
-                                </span>
-                              </div>
+                          <div className="flex flex-col gap-0.5">
+                            {show.map((dm, i) => (
+                              <button
+                                key={`${lead.id}-dme-${i}`}
+                                type="button"
+                                className="text-xs font-medium text-left hover:underline cursor-pointer max-w-[220px]"
+                                style={{ color: "var(--accent-hover)", background: "none", border: "none", padding: 0 }}
+                                title={`${dm.name} — copier: ${dm.email}`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  navigator.clipboard.writeText(dm.email).catch(() => {/* silent */});
+                                }}
+                              >
+                                {dm.email}
+                              </button>
                             ))}
+                            {extra > 0 && (
+                              <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+                                +{extra} autre{extra > 1 ? "s" : ""}
+                              </span>
+                            )}
                           </div>
                         );
                       }
-                      // No emails at all
-                      if (localResult?.error) {
-                        return <span className="text-xs" style={{ color: "var(--red)" }} title={localResult.error}>✗ {localResult.error}</span>;
+                      // Fallback: scalar email_dirigeant
+                      const dirEmail = localResult?.emailDirigeant || lead.email_dirigeant;
+                      if (dirEmail) {
+                        return (
+                          <button
+                            type="button"
+                            className="text-xs font-medium text-left hover:underline cursor-pointer"
+                            style={{ color: "var(--accent-hover)", background: "none", border: "none", padding: 0 }}
+                            title={`Copier: ${dirEmail}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigator.clipboard.writeText(dirEmail).catch(() => {/* silent */});
+                            }}
+                          >
+                            {dirEmail}
+                          </button>
+                        );
                       }
-                      return (
-                        <span className="text-xs" style={{ color: "var(--text-muted)" }}>
-                          {lead.enrichment_status === "failed" ? "✗ Rien" : "—"}
-                        </span>
-                      );
+                      return <span className="text-xs" style={{ color: "var(--text-muted)" }}>—</span>;
                     })()}
                   </td>
-                  {/* === SOURCES column — compact enrichment summary === */}
+                  {/* === ENRICHI column — status check/cross with source count === */}
                   <td className="px-3 py-3 text-center">
                     {(() => {
-                      const emails = lead.enrichment_emails;
-                      const sources = lead.enrichment_source;
-                      if (emails.length > 0) {
-                        // Show email count + unique sources as compact badges
-                        const uniqueSources = [...new Set(emails.map((e) => e.source))];
-                        const conf = lead.enrichment_confidence;
+                      const localResult = enrichResults[lead.id];
+                      const hasEmail = !!(lead.email || lead.email_global || localResult?.email || localResult?.emailGlobal);
+                      const hasDirEmail = !!(lead.email_dirigeant || localResult?.emailDirigeant || lead.decision_makers.some((dm) => dm.email) || lead.enrichment_emails.some((e) => e.type === "dirigeant"));
+                      const enrichEmails = lead.enrichment_emails;
+                      const conf = lead.enrichment_confidence;
+
+                      if (hasEmail && hasDirEmail) {
                         return (
                           <div className="flex flex-col items-center gap-0.5">
-                            <span
-                              className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
-                              style={{
-                                background: emails.length >= 2
-                                  ? "rgba(34,197,94,0.15)"
-                                  : "rgba(245,158,11,0.15)",
-                                color: emails.length >= 2 ? "#22c55e" : "#f59e0b",
-                              }}
-                            >
-                              {emails.length} email{emails.length > 1 ? "s" : ""}
-                            </span>
-                            <div className="flex flex-wrap justify-center gap-0.5 mt-0.5">
-                              {uniqueSources.slice(0, 3).map((src) => (
-                                <span
-                                  key={src}
-                                  className="text-[7px] px-1 py-px rounded"
-                                  style={{ background: "rgba(115,115,115,0.08)", color: "var(--text-muted)" }}
-                                >
-                                  {src}
-                                </span>
-                              ))}
-                              {uniqueSources.length > 3 && (
-                                <span className="text-[7px]" style={{ color: "var(--text-muted)" }}>+{uniqueSources.length - 3}</span>
-                              )}
-                            </div>
+                            <span className="text-sm font-bold" style={{ color: "var(--green)" }}>✓✓</span>
+                            {enrichEmails.length > 0 && (
+                              <span className="text-[9px]" style={{ color: "var(--text-muted)" }}>
+                                {enrichEmails.length} email{enrichEmails.length > 1 ? "s" : ""}
+                              </span>
+                            )}
                             {conf != null && conf > 0 && (
-                              <span
-                                className="text-[9px] font-medium"
-                                style={{ color: conf >= 70 ? "#22c55e" : conf >= 40 ? "#f59e0b" : "#737373" }}
-                              >
+                              <span className="text-[9px] font-medium" style={{ color: conf >= 70 ? "#22c55e" : conf >= 40 ? "#f59e0b" : "#737373" }}>
                                 {conf}%
                               </span>
                             )}
                           </div>
                         );
                       }
-                      // Fallback: legacy enrichment_source string
-                      if (sources) {
-                        const srcList = sources.split(",").map((s) => s.trim()).filter(Boolean);
+                      if (hasEmail) {
                         return (
                           <div className="flex flex-col items-center gap-0.5">
-                            <div className="flex flex-wrap justify-center gap-0.5">
-                              {srcList.slice(0, 3).map((src) => (
-                                <span
-                                  key={src}
-                                  className="text-[7px] px-1 py-px rounded"
-                                  style={{ background: "rgba(115,115,115,0.08)", color: "var(--text-muted)" }}
-                                >
-                                  {src}
-                                </span>
-                              ))}
-                              {srcList.length > 3 && (
-                                <span className="text-[7px]" style={{ color: "var(--text-muted)" }}>+{srcList.length - 3}</span>
-                              )}
-                            </div>
+                            <span className="text-sm" style={{ color: "var(--green)" }}>✓</span>
+                            {conf != null && conf > 0 && (
+                              <span className="text-[9px] font-medium" style={{ color: conf >= 70 ? "#22c55e" : conf >= 40 ? "#f59e0b" : "#737373" }}>
+                                {conf}%
+                              </span>
+                            )}
                           </div>
                         );
                       }
-                      return <span className="text-xs" style={{ color: "var(--text-muted)" }}>—</span>;
+                      if (localResult?.error) {
+                        return <span className="text-sm" style={{ color: "var(--red)" }} title={localResult.error}>✗</span>;
+                      }
+                      if (lead.enrichment_status === "failed" || lead.enrichment_status === "skipped") {
+                        return <span className="text-sm" style={{ color: "var(--red)" }}>✗</span>;
+                      }
+                      return <span className="text-sm" style={{ color: "var(--text-muted)" }}>—</span>;
                     })()}
                   </td>
                 </tr>
@@ -1078,7 +1073,7 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
                 {expandedLead === lead.id && (
                   <tr key={`${lead.id}-expanded`}>
                     <td
-                      colSpan={8}
+                      colSpan={9}
                       className="px-6 py-4"
                       style={{ background: "var(--bg-raised)", borderBottom: "1px solid var(--border)" }}
                     >

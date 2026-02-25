@@ -139,6 +139,10 @@ export async function POST(request: Request) {
     if (mergedDMs.length > 0) {
       updateData.decision_makers = mergedDMs;
     }
+    // Save full email provenance array (source, confidence, type per email)
+    if (result.enrichmentEmails && result.enrichmentEmails.length > 0) {
+      updateData.enrichment_emails = result.enrichmentEmails;
+    }
 
     // Await DB write — guarantee persistence before responding
     const { error: updateError } = await supabase
@@ -164,6 +168,7 @@ export async function POST(request: Request) {
       sourcesTried: result.sourcesTried,
       durationMs: result.durationMs,
       decisionMakers: result.decisionMakers ?? [],
+      enrichmentEmails: result.enrichmentEmails ?? [],
     });
   } catch (err) {
     // Waterfall threw — mark as failed (await to guarantee persistence)
