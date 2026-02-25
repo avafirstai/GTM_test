@@ -160,7 +160,7 @@ export const DEFAULT_SOURCES: EnrichmentSource[] = [
   { name: "email_permutation",  priority: 5, enabled: true,  tier: "fr_public" },
   { name: "google_dork",        priority: 6, enabled: true,  tier: "freemium" }, // Graceful no-op if GOOGLE_CSE env vars missing
   { name: "linkedin_search",   priority: 7, enabled: true,  tier: "freemium" }, // Graceful no-op if Apollo/CSE env vars missing
-  { name: "kaspr",              priority: 8, enabled: false, tier: "paid" },     // Opt-in only
+  { name: "kaspr",              priority: 8, enabled: true,  tier: "paid" },     // Requires KASPR_API_KEY env var
 ];
 
 export const DEFAULT_WATERFALL_CONFIG: WaterfallConfig = {
@@ -168,6 +168,6 @@ export const DEFAULT_WATERFALL_CONFIG: WaterfallConfig = {
   stopOnConfidence: 80,
   maxSources: 8,
   timeoutPerSource: 5_000,
-  useKaspr: false,
+  useKaspr: true,
   minScoreForPaid: 30,
 };
