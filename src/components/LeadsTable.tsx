@@ -798,29 +798,46 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
                     </span>
                   </td>
                   <td className="px-3 py-3">
-                    {lead.email ? (
-                      <span className="text-xs" style={{ color: "var(--green)" }}>
-                        {lead.email.length > 25
-                          ? lead.email.substring(0, 22) + "..."
-                          : lead.email}
-                      </span>
-                    ) : (
-                      <span className="text-xs" style={{ color: "var(--red)" }}>
-                        Manquant
-                      </span>
-                    )}
+                    {(() => {
+                      const displayEmail = lead.email || enrichResults[lead.id]?.email;
+                      if (displayEmail) {
+                        return (
+                          <span className="text-xs" style={{ color: "var(--green)" }}>
+                            {displayEmail.length > 25
+                              ? displayEmail.substring(0, 22) + "..."
+                              : displayEmail}
+                          </span>
+                        );
+                      }
+                      return (
+                        <span className="text-xs" style={{ color: "var(--red)" }}>
+                          Manquant
+                        </span>
+                      );
+                    })()}
                   </td>
                   <td className="px-3 py-3 text-center">
                     <PipelineBadge status={lead.statut_pipeline} />
                   </td>
                   <td className="px-3 py-3 text-center">
-                    {lead.enrichment_status === "enriched" ? (
-                      <span className="text-xs font-medium" style={{ color: "var(--green)" }} title="Email/phone trouve par enrichissement">✓ Oui</span>
-                    ) : lead.enrichment_status === "failed" || lead.enrichment_status === "skipped" ? (
-                      <span className="text-xs font-medium" style={{ color: "#ef4444" }} title="Enrichissement tente, rien trouve">✗ Tente</span>
-                    ) : (
-                      <span className="text-xs" style={{ color: "var(--text-muted)" }}>—</span>
-                    )}
+                    {(() => {
+                      // Check local enrichment results first (immediate feedback)
+                      const localResult = enrichResults[lead.id];
+                      if (localResult?.email) {
+                        return <span className="text-xs font-medium" style={{ color: "var(--green)" }} title="Email trouve par enrichissement">✓ Oui</span>;
+                      }
+                      if (localResult?.error) {
+                        return <span className="text-xs font-medium" style={{ color: "#ef4444" }} title={localResult.error}>✗ Tente</span>;
+                      }
+                      // Fall back to DB status from props
+                      if (lead.enrichment_status === "enriched") {
+                        return <span className="text-xs font-medium" style={{ color: "var(--green)" }} title="Email/phone trouve par enrichissement">✓ Oui</span>;
+                      }
+                      if (lead.enrichment_status === "failed" || lead.enrichment_status === "skipped") {
+                        return <span className="text-xs font-medium" style={{ color: "#ef4444" }} title="Enrichissement tente, rien trouve">✗ Tente</span>;
+                      }
+                      return <span className="text-xs" style={{ color: "var(--text-muted)" }}>—</span>;
+                    })()}
                   </td>
                 </tr>
                 {/* Expanded details */}
