@@ -190,6 +190,8 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
     siret?: string;
     confidence?: number;
     sourcesTried?: string[];
+    decisionMakers?: Array<{ name: string; email: string | null; phone?: string | null; linkedinUrl?: string | null; title?: string | null; source: string; confidence: number }>;
+    enrichmentEmails?: Array<{ email: string; source: string; confidence: number; type: "global" | "dirigeant" | "unknown"; isBest: boolean; personName: string | null; smtpVerified?: boolean }>;
     error?: string;
   }>>({});
   const [bulkAction, setBulkAction] = useState<"idle" | "exporting" | "sending" | "enriching">("idle");
@@ -224,6 +226,8 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
             siret: data.siret || undefined,
             confidence: data.confidence,
             sourcesTried: data.sourcesTried,
+            decisionMakers: data.decisionMakers || undefined,
+            enrichmentEmails: data.enrichmentEmails || undefined,
           },
         }));
       } else {
@@ -507,6 +511,8 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
               siret: data.siret || undefined,
               confidence: data.confidence,
               sourcesTried: data.sourcesTried,
+              decisionMakers: data.decisionMakers || undefined,
+              enrichmentEmails: data.enrichmentEmails || undefined,
             },
           }));
         } else {
@@ -933,8 +939,11 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
                   <td className="px-3 py-3">
                     {(() => {
                       const localResult = enrichResults[lead.id];
-                      // From enrichment_emails: pick all "dirigeant" type emails
-                      const dirEmails = lead.enrichment_emails.filter((e) => e.type === "dirigeant");
+                      // Priority 1: local enrichmentEmails from state (immediate after enrichment)
+                      // Priority 2: enrichment_emails from DB (after refresh)
+                      const localDirEmails = localResult?.enrichmentEmails?.filter((e) => e.type === "dirigeant") ?? [];
+                      const dbDirEmails = lead.enrichment_emails.filter((e) => e.type === "dirigeant");
+                      const dirEmails = localDirEmails.length > 0 ? localDirEmails : dbDirEmails;
                       if (dirEmails.length > 0) {
                         const show = dirEmails.slice(0, 3);
                         const extra = dirEmails.length - 3;
@@ -980,8 +989,10 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
                           </div>
                         );
                       }
-                      // Fallback: legacy multi-DM from decision_makers array
-                      const dms = lead.decision_makers.filter((dm) => dm.email);
+                      // Fallback: legacy multi-DM from decision_makers (local state first, then DB)
+                      const localDMs = (localResult?.decisionMakers ?? []).filter((dm): dm is typeof dm & { email: string } => !!dm.email);
+                      const dbDMs = lead.decision_makers.filter((dm) => dm.email);
+                      const dms = localDMs.length > 0 ? localDMs : dbDMs;
                       if (dms.length > 0) {
                         const show = dms.slice(0, 3);
                         const extra = dms.length - 3;
