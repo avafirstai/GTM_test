@@ -116,7 +116,7 @@ function deriveEnrichmentStatus(api: ApiLead): Lead["enrichment_status"] {
  */
 function mapApiLeadToLead(api: ApiLead): Lead {
   return {
-    id: api.id ?? `lead-${Math.random().toString(36).slice(2, 10)}`,
+    id: api.id,
     nom_entreprise: api.name || "",
     type_etablissement: api.category || "",
     ville: api.city || "",
@@ -182,7 +182,7 @@ export async function fetchLeads(params?: {
   if (params?.sortDir) searchParams.set("sortDir", params.sortDir);
   if (params?.enrichmentStatus) searchParams.set("enrichmentStatus", params.enrichmentStatus);
 
-  const res = await fetch(`/api/leads?${searchParams.toString()}`);
+  const res = await fetch(`/api/leads?${searchParams.toString()}`, { cache: "no-store" });
   if (!res.ok) {
     throw new Error(`Failed to fetch leads: ${res.status}`);
   }

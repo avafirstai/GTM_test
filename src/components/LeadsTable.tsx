@@ -185,6 +185,8 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
   const [decisionMakers, setDecisionMakers] = useState<Record<string, DecisionMaker[]>>({});
   const [dmLoading, setDmLoading] = useState<Set<string>>(new Set());
   const [dmErrors, setDmErrors] = useState<Record<string, string>>({});
+  const [currentPage, setCurrentPage] = useState(1);
+  const PAGE_SIZE = 50;
 
   // --- Action handlers ---
 
@@ -283,6 +285,11 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
     }
   }, [campaignId]);
 
+  const updateFilters = useCallback((newFilters: LeadFilters) => {
+    setFilters(newFilters);
+    setCurrentPage(1);
+  }, []);
+
   // Derive unique filter options
   const villes = useMemo(() => [...new Set(leads.map((l) => l.ville).filter(Boolean))].sort(), [leads]);
   const verticales = useMemo(() => [...new Set(leads.map((l) => l.verticale).filter(Boolean))].sort(), [leads]);
@@ -320,16 +327,26 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
     result = [...result].sort((a, b) => {
       const aVal = a[sortField];
       const bVal = b[sortField];
+      let cmp: number;
       if (typeof aVal === "number" && typeof bVal === "number") {
-        return sortDir === "asc" ? aVal - bVal : bVal - aVal;
+        cmp = aVal - bVal;
+      } else {
+        cmp = String(aVal).localeCompare(String(bVal));
       }
-      const aStr = String(aVal);
-      const bStr = String(bVal);
-      return sortDir === "asc" ? aStr.localeCompare(bStr) : bStr.localeCompare(aStr);
+      // Tiebreaker par ID pour un ordre 100% deterministe
+      if (cmp === 0) cmp = a.id.localeCompare(b.id);
+      return sortDir === "asc" ? cmp : -cmp;
     });
 
     return result;
   }, [leads, filters, sortField, sortDir]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredLeads.length / PAGE_SIZE));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const paginatedLeads = filteredLeads.slice(
+    (safeCurrentPage - 1) * PAGE_SIZE,
+    safeCurrentPage * PAGE_SIZE
+  );
 
   const handleExportCSV = useCallback(() => {
     const leadsToExport = filteredLeads.filter((l) => selectedLeads.has(l.id));
@@ -460,6 +477,7 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
       setSortField(field);
       setSortDir("desc");
     }
+    setCurrentPage(1);
   };
 
   const toggleSelectAll = () => {
@@ -493,7 +511,7 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
           type="text"
           placeholder="Rechercher entreprise, email, ville..."
           value={filters.search}
-          onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+          onChange={(e) => updateFilters({ ...filters, search: e.target.value })}
           className="flex-1 min-w-60 px-3 py-2 rounded-lg text-sm"
           style={{
             background: "var(--bg)",
@@ -505,17 +523,17 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
           label="Villes"
           options={villes}
           selected={filters.ville}
-          onChange={(next) => setFilters({ ...filters, ville: next })}
+          onChange={(next) => updateFilters({ ...filters, ville: next })}
         />
         <MultiSelectFilter
           label="Verticales"
           options={verticales}
           selected={filters.verticale}
-          onChange={(next) => setFilters({ ...filters, verticale: next })}
+          onChange={(next) => updateFilters({ ...filters, verticale: next })}
         />
         <select
           value={filters.pipeline}
-          onChange={(e) => setFilters({ ...filters, pipeline: e.target.value })}
+          onChange={(e) => updateFilters({ ...filters, pipeline: e.target.value })}
           className="px-3 py-2 rounded-lg text-sm"
           style={{
             background: "var(--bg)",
@@ -534,7 +552,7 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
         <select
           value={filters.hasEmail}
           onChange={(e) =>
-            setFilters({ ...filters, hasEmail: e.target.value as "all" | "yes" | "no" })
+            updateFilters({ ...filters, hasEmail: e.target.value as "all" | "yes" | "no" })
           }
           className="px-3 py-2 rounded-lg text-sm"
           style={{
@@ -550,7 +568,7 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
         <select
           value={filters.enrichmentStatus}
           onChange={(e) =>
-            setFilters({ ...filters, enrichmentStatus: e.target.value as "all" | "enriched" | "failed" | "pending" })
+            updateFilters({ ...filters, enrichmentStatus: e.target.value as "all" | "enriched" | "failed" | "pending" })
           }
           className="px-3 py-2 rounded-lg text-sm"
           style={{
@@ -578,7 +596,7 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
               {v}
               <button
                 type="button"
-                onClick={() => setFilters({ ...filters, ville: filters.ville.filter((x) => x !== v) })}
+                onClick={() => updateFilters({ ...filters, ville: filters.ville.filter((x) => x !== v) })}
                 className="hover:opacity-70"
               >
                 <X size={10} />
@@ -594,7 +612,7 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
               {v}
               <button
                 type="button"
-                onClick={() => setFilters({ ...filters, verticale: filters.verticale.filter((x) => x !== v) })}
+                onClick={() => updateFilters({ ...filters, verticale: filters.verticale.filter((x) => x !== v) })}
                 className="hover:opacity-70"
               >
                 <X size={10} />
@@ -603,7 +621,7 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
           ))}
           <button
             type="button"
-            onClick={() => setFilters({ ...filters, ville: [], verticale: [] })}
+            onClick={() => updateFilters({ ...filters, ville: [], verticale: [] })}
             className="text-xs px-2 py-1"
             style={{ color: "var(--text-muted)" }}
           >
@@ -664,7 +682,7 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
       {/* Results count */}
       <div className="flex items-center justify-between mb-3">
         <p className="text-sm" style={{ color: "var(--text-muted)" }}>
-          {filteredLeads.length} leads sur {leads.length}
+          {filteredLeads.length} leads sur {leads.length} — page {safeCurrentPage}/{totalPages}
         </p>
       </div>
 
@@ -724,7 +742,7 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
             </tr>
           </thead>
           <tbody>
-            {filteredLeads.map((lead) => (
+            {paginatedLeads.map((lead) => (
               <>
                 <tr
                   key={lead.id}
@@ -1063,6 +1081,30 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
           </tbody>
         </table>
       </div>
+
+      {totalPages > 1 && (
+        <div className="flex items-center justify-center gap-3 mt-4 py-3">
+          <button
+            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+            disabled={safeCurrentPage === 1}
+            className="px-3 py-1.5 text-sm rounded-lg border disabled:opacity-30"
+            style={{ borderColor: "var(--border)", color: "var(--text-secondary)" }}
+          >
+            Precedent
+          </button>
+          <span className="text-sm" style={{ color: "var(--text-muted)" }}>
+            Page {safeCurrentPage} sur {totalPages}
+          </span>
+          <button
+            onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+            disabled={safeCurrentPage === totalPages}
+            className="px-3 py-1.5 text-sm rounded-lg border disabled:opacity-30"
+            style={{ borderColor: "var(--border)", color: "var(--text-secondary)" }}
+          >
+            Suivant
+          </button>
+        </div>
+      )}
 
       {filteredLeads.length === 0 && (
         <div className="text-center py-12">

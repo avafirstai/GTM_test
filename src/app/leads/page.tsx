@@ -79,19 +79,9 @@ export default function LeadsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [paramsKey]);
 
-  // Re-fetch EVERY TIME the page is visited or params change
-  // Using Date.now() as a cache-buster ensures fresh data on each navigation
-  const [visitKey, setVisitKey] = useState(() => Date.now());
-  useEffect(() => {
-    // On each mount/focus, bump the visit key to force re-fetch
-    const handleFocus = () => setVisitKey(Date.now());
-    window.addEventListener("focus", handleFocus);
-    return () => window.removeEventListener("focus", handleFocus);
-  }, []);
-
   useEffect(() => {
     loadLeads(0, false);
-  }, [loadLeads, visitKey]);
+  }, [loadLeads]);
 
   if (loading) {
     return (

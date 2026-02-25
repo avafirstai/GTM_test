@@ -61,6 +61,7 @@ export async function GET(request: Request) {
 
   query = query
     .order(safeSortBy, { ascending })
+    .order("id", { ascending: true })
     .range(offset, offset + limit - 1);
 
   const { data: leads, error, count } = await query;

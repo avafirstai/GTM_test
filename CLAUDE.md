@@ -401,3 +401,65 @@ npm run dev                         # Dashboard local :3000
 ```bash
 npm run build                       # Doit passer clean
 ```
+
+---
+
+## Workflow Obligatoire (EXPLORE → PLAN → CODE → VERIFY)
+
+### Phase 1 : EXPLORE (ne PAS coder)
+- Lire les fichiers impactes et leurs dependances
+- Identifier les patterns existants
+- Verifier les tests existants
+- Si doute → poser 1-3 questions AVANT de continuer
+
+### Phase 2 : PLAN (ne PAS coder)
+- Objectif : ce qu'on fait (1 phrase)
+- Fichiers touches : liste exacte
+- Approche : strategie technique (2-4 phrases max)
+- Risques : ce qui pourrait casser
+- Verification : comment prouver que ca marche
+→ Attends le "OK" avant de coder.
+
+### Phase 3 : CODE
+- Diffs minimaux et chirurgicaux
+- Un changement logique = un commit
+- Suivre les patterns existants
+- Si choix non-trivial → expliquer en 1 ligne
+
+### Phase 4 : VERIFY
+1. Build : `export PATH="/opt/homebrew/bin:$PATH" && npm run build`
+2. Relire son propre diff
+3. Si un test echoue → corriger immediatement
+4. Ne jamais dire "c'est fait" sans verification
+
+---
+
+## MUST / MUST NOT
+
+### MUST (toujours, sans exception)
+- Proposer un plan AVANT de coder
+- Lire les fichiers AVANT de les modifier
+- Faire des diffs minimaux — toucher uniquement ce qui est demande
+- Verifier la compilation apres chaque serie de changements
+- Expliquer le "pourquoi" de chaque decision architecturale
+
+### MUST NOT (jamais, sans exception)
+- Ajouter des features ou refactors non demandes
+- Ajouter du code defensif pour des scenarios impossibles
+- Creer des abstractions pour des operations one-shot
+- Supprimer des fichiers ou force-push sans confirmation
+- Designer pour des besoins futurs hypothetiques (YAGNI)
+- Desactiver un test qui echoue — corriger le code, pas le test
+- Utiliser `any` en TypeScript — jamais
+
+---
+
+## Checklist Pre-Commit
+
+- [ ] Le code compile sans erreur
+- [ ] Le diff est minimal (pas de changements non lies)
+- [ ] Pas de console.log / debugger oublies
+- [ ] Pas de credentials en dur
+- [ ] Pas de fichiers temporaires
+- [ ] Le commit message est descriptif et conventionnel
+- [ ] Chaque ligne changee a une raison d'exister
