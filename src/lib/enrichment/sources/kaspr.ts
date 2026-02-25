@@ -112,6 +112,31 @@ async function callKasprApi(
 }
 
 /* ------------------------------------------------------------------ */
+/*  LinkedIn URL Builder (fallback when no URL found by prior sources) */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Build a best-guess LinkedIn URL from a name.
+ * LinkedIn profile slugs follow the pattern: /in/prenom-nom-xxxxx
+ * We try the clean version without the random suffix — Kaspr may resolve it.
+ */
+function buildLinkedInGuess(firstName: string, lastName: string): string | null {
+  const clean = (s: string) =>
+    s.toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")  // Remove accents
+      .replace(/[^a-z\s-]/g, "")         // Keep only letters, spaces, hyphens
+      .trim()
+      .replace(/\s+/g, "-");             // Spaces → hyphens
+
+  const first = clean(firstName);
+  const last = clean(lastName);
+  if (!first || !last) return null;
+
+  return `https://www.linkedin.com/in/${first}-${last}`;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Email Selection                                                    */
 /* ------------------------------------------------------------------ */
 
@@ -166,14 +191,25 @@ async function kasprSource(
     };
   }
 
-  // Multi-DM mode: call Kaspr for each DM with a LinkedIn URL but no email
-  const dmsWithLinkedIn = context.accumulated.decisionMakers
-    .filter((dm) => dm.linkedinUrl && !dm.email)
+  // Multi-DM mode: call Kaspr for each DM without email
+  // Build LinkedIn URL guess from name when no URL found by prior sources
+  const dmsForKaspr = context.accumulated.decisionMakers
+    .filter((dm) => !dm.email)
+    .map((dm) => {
+      if (dm.linkedinUrl) return dm;
+      // Fallback: build LinkedIn URL from name
+      const guessUrl = buildLinkedInGuess(dm.firstName, dm.lastName);
+      if (guessUrl) {
+        return { ...dm, linkedinUrl: guessUrl };
+      }
+      return dm;
+    })
+    .filter((dm) => dm.linkedinUrl)
     .slice(0, MAX_KASPR_DM_CALLS);
 
-  if (dmsWithLinkedIn.length > 0) {
+  if (dmsForKaspr.length > 0) {
     // Parallel Kaspr calls for all eligible DMs
-    const kasprPromises = dmsWithLinkedIn.map((dm) =>
+    const kasprPromises = dmsForKaspr.map((dm) =>
       callKasprApi(dm.linkedinUrl!, dm.name, apiKey)
         .then((response) => ({ dm, response })),
     );
@@ -184,7 +220,7 @@ async function kasprSource(
     let bestEmail: string | null = null;
     let bestPhone: string | null = null;
     const metadata: Record<string, string> = {
-      dm_calls: String(dmsWithLinkedIn.length),
+      dm_calls: String(dmsForKaspr.length),
     };
     let successCount = 0;
 
@@ -224,18 +260,26 @@ async function kasprSource(
   }
 
   // Legacy fallback: single LinkedIn URL from scalar accumulated context
-  const linkedinUrl = context.accumulated.linkedinUrl;
+  // Or build one from dirigeant name
+  let linkedinUrl = context.accumulated.linkedinUrl;
+  const firstName = context.accumulated.dirigeantFirstName;
+  const lastName = context.accumulated.dirigeantLastName;
+
+  if (!linkedinUrl && firstName && lastName) {
+    linkedinUrl = buildLinkedInGuess(firstName, lastName);
+  }
+
   if (!linkedinUrl) {
     return {
       ...emptyResult,
-      metadata: { error: "No LinkedIn URL available" },
+      metadata: { error: "No LinkedIn URL and no dirigeant name to build one" },
     };
   }
 
   // Build name for Kaspr
   const name =
     context.accumulated.dirigeant ??
-    `${context.accumulated.dirigeantFirstName ?? ""} ${context.accumulated.dirigeantLastName ?? ""}`.trim() ??
+    `${firstName ?? ""} ${lastName ?? ""}`.trim() ??
     lead.name;
 
   // Call Kaspr API

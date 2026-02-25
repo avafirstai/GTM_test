@@ -245,7 +245,8 @@ export async function runWaterfall(
       break;
     }
 
-    // --- Guard: Kaspr opt-in check ---
+    // --- Guard: Kaspr opt-in + score check ---
+    // LinkedIn URL is no longer required — kaspr.ts builds guess URLs from name
     if (source.name === "kaspr") {
       if (!config.useKaspr) {
         console.log(`[Waterfall] SKIP source=kaspr reason=useKaspr=false`);
@@ -255,14 +256,14 @@ export async function runWaterfall(
         console.log(`[Waterfall] SKIP source=kaspr reason=score(${lead.score ?? 0})<minScore(${config.minScoreForPaid})`);
         continue;
       }
-      // Check BOTH scalar linkedinUrl AND individual DM linkedinUrls
-      // The multi-DM path in kaspr.ts filters DMs with linkedinUrl independently,
-      // but the waterfall guard was only checking the scalar — causing Kaspr to be
-      // skipped even when individual DMs had LinkedIn URLs from google_dork/linkedin_search
-      const hasAnyLinkedInUrl = context.accumulated.linkedinUrl ||
+      // Need EITHER a LinkedIn URL OR a dirigeant name (to build a guess URL)
+      const hasLinkedIn = context.accumulated.linkedinUrl ||
         context.accumulated.decisionMakers.some((dm) => dm.linkedinUrl);
-      if (!hasAnyLinkedInUrl) {
-        console.log(`[Waterfall] SKIP source=kaspr reason=noLinkedInUrl (scalar=${context.accumulated.linkedinUrl ?? "null"}, dms_with_linkedin=${context.accumulated.decisionMakers.filter((dm) => dm.linkedinUrl).length})`);
+      const hasDirigentName = context.accumulated.dirigeant ||
+        (context.accumulated.dirigeantFirstName && context.accumulated.dirigeantLastName) ||
+        context.accumulated.decisionMakers.some((dm) => dm.firstName && dm.lastName);
+      if (!hasLinkedIn && !hasDirigentName) {
+        console.log(`[Waterfall] SKIP source=kaspr reason=noLinkedInUrl+noDirigentName`);
         continue;
       }
     }
