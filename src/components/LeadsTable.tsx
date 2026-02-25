@@ -334,7 +334,7 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
         cmp = String(aVal).localeCompare(String(bVal));
       }
       // Tiebreaker par ID pour un ordre 100% deterministe
-      if (cmp === 0) cmp = a.id.localeCompare(b.id);
+      if (cmp === 0) cmp = (a.id || "").localeCompare(b.id || "");
       return sortDir === "asc" ? cmp : -cmp;
     });
 

@@ -116,7 +116,7 @@ function deriveEnrichmentStatus(api: ApiLead): Lead["enrichment_status"] {
  */
 function mapApiLeadToLead(api: ApiLead): Lead {
   return {
-    id: api.id,
+    id: api.id || `lead-${api.name || ""}-${api.city || ""}`,
     nom_entreprise: api.name || "",
     type_etablissement: api.category || "",
     ville: api.city || "",
