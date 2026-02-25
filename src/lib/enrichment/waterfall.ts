@@ -330,13 +330,13 @@ export async function runWaterfall(
     // --- Early stop: confidence threshold reached ---
     const aggregateConfidence = computeAggregateConfidence(allResults);
     if (aggregateConfidence >= config.stopOnConfidence) {
-      // Never early-stop before the free sources have all run
-      // dns_intel (1), schema_org (2), deep_scrape (3) MUST all execute
-      // They build the context (emails, dirigeants, phones) that paid sources need
-      const MIN_SOURCES_BEFORE_EARLY_STOP = 7;
+      // NEVER early-stop before ALL sources (including Kaspr) have had a chance.
+      // Quality > speed: Kaspr (source #8) provides verified personal emails
+      // that are far more valuable than early generic emails at 80% confidence.
+      const MIN_SOURCES_BEFORE_EARLY_STOP = 8;
       if (sourcesTried.length < MIN_SOURCES_BEFORE_EARLY_STOP) {
         console.log(
-          `[Waterfall] SKIP early-stop: confidence=${aggregateConfidence} but only ${sourcesTried.length}/${MIN_SOURCES_BEFORE_EARLY_STOP} free sources tried`,
+          `[Waterfall] SKIP early-stop: confidence=${aggregateConfidence} but only ${sourcesTried.length}/${MIN_SOURCES_BEFORE_EARLY_STOP} sources tried (quality>speed)`,
         );
       } else {
         console.log(`[Waterfall] EARLY STOP confidence=${aggregateConfidence}>=${config.stopOnConfidence}`);
