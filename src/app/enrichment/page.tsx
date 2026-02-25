@@ -241,7 +241,7 @@ const SOURCE_ICONS: Record<string, React.ReactNode> = {
 export default function EnrichmentPage() {
   const { data, loading } = useStats();
   const [sources, setSources] = useState<SourceToggle[]>(DEFAULT_SOURCES);
-  const [useKaspr, setUseKaspr] = useState(false);
+  const [useKaspr, setUseKaspr] = useState(true);
   const [enrichLimit, setEnrichLimit] = useState(20);
   const [stopOnConfidence, setStopOnConfidence] = useState(80);
   const [enrichmentFilter, setEnrichmentFilter] = useState<"pending" | "failed" | "no_email" | "all">("pending");

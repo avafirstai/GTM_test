@@ -25,7 +25,7 @@ export const maxDuration = 120; // Up to 120s for batch processing
  *   limit?: number,                 // Max leads (default 20, max 100)
  *   sources?: string[],             // Override which sources to use
  *   stopOnConfidence?: number,       // Default 80
- *   useKaspr?: boolean,             // Default false (opt-in — saves credits)
+ *   useKaspr?: boolean,             // Default true (Kaspr = arme principale)
  *   minScoreForPaid?: number,       // Default 30
  * }
  *
@@ -57,7 +57,7 @@ export async function POST(request: Request) {
   const config: WaterfallConfig = {
     ...DEFAULT_WATERFALL_CONFIG,
     stopOnConfidence: body.stopOnConfidence ?? 80,
-    useKaspr: body.useKaspr ?? false,
+    useKaspr: body.useKaspr ?? true,
     minScoreForPaid: body.minScoreForPaid ?? 30,
   };
 
