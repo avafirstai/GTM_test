@@ -431,7 +431,15 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
   const handleBulkEnrich = useCallback(async () => {
     // Enrichir les leads sans email, dans l'ordre d'affichage (haut → bas)
     // filteredLeads est deja trie par score desc + id tiebreaker = ordre ecran
-    const leadsToEnrich = filteredLeads.filter((l) => selectedLeads.has(l.id) && !l.email);
+    const leadsToEnrich = filteredLeads.filter((l) =>
+      selectedLeads.has(l.id) &&
+      !l.email &&
+      !enrichResults[l.id]?.email &&
+      !enrichResults[l.id]?.error &&
+      l.enrichment_status !== "enriched" &&
+      l.enrichment_status !== "failed" &&
+      l.enrichment_status !== "skipped"
+    );
     if (leadsToEnrich.length === 0) {
       setBulkMessage("Aucun lead sans email dans la selection");
       setBulkMessageType("error");
