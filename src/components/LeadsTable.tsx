@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
-import { ChevronDown, X, Loader2, Linkedin, Mail as MailIcon, Shield, MapPin } from "lucide-react";
+import { ChevronDown, X, Loader2, Linkedin, Mail as MailIcon, Shield, MapPin, Copy, Check } from "lucide-react";
 import type { Lead, DecisionMaker, SortField, SortDirection, LeadFilters } from "@/lib/leads-data";
 import { useCustomData } from "@/lib/useCustomData";
 
@@ -895,11 +895,21 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
                       const displayEmail = localResult?.emailGlobal || lead.email || localResult?.email;
                       if (displayEmail) {
                         return (
-                          <span className="text-xs" style={{ color: "var(--green)" }} title={displayEmail}>
-                            {displayEmail.length > 25
-                              ? displayEmail.substring(0, 22) + "..."
-                              : displayEmail}
-                          </span>
+                          <button
+                            type="button"
+                            className="text-xs text-left hover:underline cursor-pointer"
+                            style={{ color: "var(--green)", background: "none", border: "none", padding: 0 }}
+                            title={`Cliquer pour copier: ${displayEmail}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigator.clipboard.writeText(displayEmail).catch(() => {/* silent */});
+                              const target = e.currentTarget;
+                              target.dataset.copied = "true";
+                              setTimeout(() => { target.dataset.copied = "false"; }, 1500);
+                            }}
+                          >
+                            {displayEmail}
+                          </button>
                         );
                       }
                       return (
@@ -931,14 +941,19 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
                         return (
                           <div className="flex flex-col gap-0.5">
                             {show.map((dm, i) => (
-                              <span
+                              <button
                                 key={`${lead.id}-dme-${i}`}
-                                className="text-xs font-medium truncate max-w-[180px]"
-                                style={{ color: "var(--accent-hover)" }}
-                                title={`${dm.name} — ${dm.email}`}
+                                type="button"
+                                className="text-xs font-medium text-left hover:underline cursor-pointer max-w-[220px]"
+                                style={{ color: "var(--accent-hover)", background: "none", border: "none", padding: 0 }}
+                                title={`${dm.name} — cliquer pour copier: ${dm.email}`}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  navigator.clipboard.writeText(dm.email).catch(() => {/* silent */});
+                                }}
                               >
                                 {dm.email}
-                              </span>
+                              </button>
                             ))}
                             {extra > 0 && (
                               <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
@@ -953,9 +968,18 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
                       const dirEmail = localResult?.emailDirigeant || lead.email_dirigeant;
                       if (dirEmail) {
                         return (
-                          <span className="text-xs font-medium" style={{ color: "var(--accent-hover)" }} title={dirEmail}>
-                            {dirEmail.length > 25 ? dirEmail.substring(0, 22) + "..." : dirEmail}
-                          </span>
+                          <button
+                            type="button"
+                            className="text-xs font-medium text-left hover:underline cursor-pointer"
+                            style={{ color: "var(--accent-hover)", background: "none", border: "none", padding: 0 }}
+                            title={`Cliquer pour copier: ${dirEmail}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigator.clipboard.writeText(dirEmail).catch(() => {/* silent */});
+                            }}
+                          >
+                            {dirEmail}
+                          </button>
                         );
                       }
                       return (

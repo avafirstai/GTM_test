@@ -86,15 +86,32 @@ function updateAccumulated(
   context: EnrichmentContext,
   result: EnrichmentResult,
 ): void {
-  // Merge dirigeants (array-based accumulation)
+  // Merge dirigeants (array-based accumulation with field-level merge)
+  // When the same person is found by multiple sources, merge non-null fields
+  // so that e.g. deep_scrape finds the name, google_dork adds linkedinUrl,
+  // and kaspr adds verified email — all on the same DM object.
   if (result.dirigeants && result.dirigeants.length > 0) {
     for (const dm of result.dirigeants) {
       const normName = dm.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
-      const alreadyExists = context.accumulated.decisionMakers.some((existing) => {
+      const existingIdx = context.accumulated.decisionMakers.findIndex((existing) => {
         const existNorm = existing.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
         return existNorm === normName;
       });
-      if (!alreadyExists) {
+      if (existingIdx >= 0) {
+        // Same person — merge fields (non-null/non-empty wins, higher confidence wins)
+        const ex = context.accumulated.decisionMakers[existingIdx];
+        context.accumulated.decisionMakers[existingIdx] = {
+          name: dm.name || ex.name,
+          firstName: dm.firstName || ex.firstName,
+          lastName: dm.lastName || ex.lastName,
+          title: dm.title || ex.title,
+          email: dm.email || ex.email,
+          phone: dm.phone || ex.phone,
+          linkedinUrl: dm.linkedinUrl || ex.linkedinUrl,
+          source: dm.email ? dm.source : (dm.linkedinUrl && !ex.linkedinUrl ? dm.source : ex.source),
+          confidence: Math.max(dm.confidence ?? 0, ex.confidence ?? 0),
+        };
+      } else {
         context.accumulated.decisionMakers.push(dm);
       }
     }
@@ -236,8 +253,14 @@ export async function runWaterfall(
         console.log(`[Waterfall] SKIP source=kaspr reason=score(${lead.score ?? 0})<minScore(${config.minScoreForPaid})`);
         continue;
       }
-      if (!context.accumulated.linkedinUrl) {
-        console.log(`[Waterfall] SKIP source=kaspr reason=noLinkedInUrl`);
+      // Check BOTH scalar linkedinUrl AND individual DM linkedinUrls
+      // The multi-DM path in kaspr.ts filters DMs with linkedinUrl independently,
+      // but the waterfall guard was only checking the scalar — causing Kaspr to be
+      // skipped even when individual DMs had LinkedIn URLs from google_dork/linkedin_search
+      const hasAnyLinkedInUrl = context.accumulated.linkedinUrl ||
+        context.accumulated.decisionMakers.some((dm) => dm.linkedinUrl);
+      if (!hasAnyLinkedInUrl) {
+        console.log(`[Waterfall] SKIP source=kaspr reason=noLinkedInUrl (scalar=${context.accumulated.linkedinUrl ?? "null"}, dms_with_linkedin=${context.accumulated.decisionMakers.filter((dm) => dm.linkedinUrl).length})`);
         continue;
       }
     }
