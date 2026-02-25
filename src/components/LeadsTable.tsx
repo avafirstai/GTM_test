@@ -827,13 +827,10 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
                 Score <SortIcon field="score" />
               </th>
               <th className="px-3 py-3 text-left" style={{ color: "var(--text-muted)" }}>
-                Email
-              </th>
-              <th className="px-3 py-3 text-left" style={{ color: "var(--text-muted)" }}>
-                Email Dirigeant
+                Emails
               </th>
               <th className="px-3 py-3 text-center" style={{ color: "var(--text-muted)" }}>
-                Enrichi
+                Sources
               </th>
             </tr>
           </thead>
@@ -888,72 +885,64 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
                   <td className="px-3 py-3 text-center">
                     <ScoreBadge score={lead.score} />
                   </td>
+                  {/* === EMAILS column — ALL emails with provenance badges === */}
                   <td className="px-3 py-3">
                     {(() => {
-                      const localResult = enrichResults[lead.id];
-                      // Email globale = generic company email (contact@, info@, etc.)
-                      const displayEmail = localResult?.emailGlobal || lead.email || localResult?.email;
-                      if (displayEmail) {
+                      // Prefer enrichment_emails (full provenance) — fallback to legacy scalars
+                      const emails = lead.enrichment_emails;
+                      if (emails.length > 0) {
+                        const show = emails.slice(0, 3);
+                        const extra = emails.length - 3;
                         return (
-                          <button
-                            type="button"
-                            className="text-xs text-left hover:underline cursor-pointer"
-                            style={{ color: "var(--green)", background: "none", border: "none", padding: 0 }}
-                            title={`Cliquer pour copier: ${displayEmail}`}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              navigator.clipboard.writeText(displayEmail).catch(() => {/* silent */});
-                              const target = e.currentTarget;
-                              target.dataset.copied = "true";
-                              setTimeout(() => { target.dataset.copied = "false"; }, 1500);
-                            }}
-                          >
-                            {displayEmail}
-                          </button>
-                        );
-                      }
-                      return (
-                        <span className="text-xs" style={{ color: "var(--red)" }}>
-                          Manquant
-                        </span>
-                      );
-                    })()}
-                  </td>
-                  <td className="px-3 py-3">
-                    {(() => {
-                      const localResult = enrichResults[lead.id];
-                      // Multi-DM: prefer decision_makers array from DB
-                      let dms = lead.decision_makers.filter((dm) => dm.email);
-                      // Safety net: synthesize virtual DM from scalar if array empty
-                      if (dms.length === 0 && lead.email_dirigeant) {
-                        dms = [{
-                          name: lead.dirigeant || "",
-                          title: "",
-                          email: lead.email_dirigeant,
-                          linkedin_url: lead.dirigeant_linkedin || "",
-                          confidence: lead.enrichment_confidence ?? 0,
-                        }];
-                      }
-
-                      if (dms.length > 0) {
-                        const show = dms.slice(0, 3);
-                        const extra = dms.length - 3;
-                        return (
-                          <div className="flex flex-col gap-0.5">
-                            {show.map((dm, i) => (
-                              <button
-                                key={`${lead.id}-dme-${i}`}
-                                type="button"
-                                className="text-xs font-medium text-left hover:underline cursor-pointer max-w-[220px]"
-                                style={{ color: "var(--accent-hover)", background: "none", border: "none", padding: 0 }}
-                                title={`${dm.name} — cliquer pour copier: ${dm.email}`}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  navigator.clipboard.writeText(dm.email).catch(() => {/* silent */});
-                                }}
-                              >
-                                {dm.email}
-                              </button>
+                          <div className="flex flex-col gap-1">
+                            {show.map((ee, i) => (
+                              <div key={`${lead.id}-em-${i}`} className="flex items-center gap-1">
+                                {/* Best star */}
+                                {ee.isBest && (
+                                  <span title="Meilleur email" className="text-[10px] shrink-0" style={{ color: "#f59e0b" }}>★</span>
+                                )}
+                                {/* Email text — click to copy */}
+                                <button
+                                  type="button"
+                                  className="text-xs text-left hover:underline cursor-pointer truncate max-w-[180px]"
+                                  style={{
+                                    color: ee.type === "dirigeant" ? "var(--accent-hover)" : "var(--green)",
+                                    background: "none", border: "none", padding: 0,
+                                  }}
+                                  title={`${ee.email} — ${ee.source} (${ee.confidence}%)${ee.personName ? ` — ${ee.personName}` : ""}`}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    navigator.clipboard.writeText(ee.email).catch(() => {/* silent */});
+                                  }}
+                                >
+                                  {ee.email}
+                                </button>
+                                {/* Type pill */}
+                                <span
+                                  className="text-[8px] px-1 py-px rounded shrink-0 font-medium"
+                                  style={{
+                                    background: ee.type === "dirigeant"
+                                      ? "rgba(99,102,241,0.12)"
+                                      : ee.type === "global"
+                                        ? "rgba(34,197,94,0.12)"
+                                        : "rgba(115,115,115,0.10)",
+                                    color: ee.type === "dirigeant"
+                                      ? "#818cf8"
+                                      : ee.type === "global"
+                                        ? "#22c55e"
+                                        : "#737373",
+                                  }}
+                                >
+                                  {ee.type === "dirigeant" ? "perso" : ee.type === "global" ? "gen." : "?"}
+                                </span>
+                                {/* Source pill */}
+                                <span
+                                  className="text-[8px] px-1 py-px rounded shrink-0"
+                                  style={{ background: "rgba(115,115,115,0.08)", color: "var(--text-muted)" }}
+                                >
+                                  {ee.source}
+                                </span>
+                              </div>
                             ))}
                             {extra > 0 && (
                               <span className="text-[10px]" style={{ color: "var(--text-muted)" }}>
@@ -963,47 +952,123 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
                           </div>
                         );
                       }
-
-                      // Fallback: scalar (backward compat + single enrichment)
-                      const dirEmail = localResult?.emailDirigeant || lead.email_dirigeant;
-                      if (dirEmail) {
+                      // Fallback: legacy email fields (leads enriched before this feature)
+                      const localResult = enrichResults[lead.id];
+                      const emailGlobal = localResult?.emailGlobal || lead.email_global || lead.email;
+                      const emailDir = localResult?.emailDirigeant || lead.email_dirigeant;
+                      const legacyEmails: Array<{ email: string; label: string; color: string }> = [];
+                      if (emailDir) legacyEmails.push({ email: emailDir, label: "perso", color: "var(--accent-hover)" });
+                      if (emailGlobal && emailGlobal !== emailDir) legacyEmails.push({ email: emailGlobal, label: "gen.", color: "var(--green)" });
+                      if (legacyEmails.length > 0) {
                         return (
-                          <button
-                            type="button"
-                            className="text-xs font-medium text-left hover:underline cursor-pointer"
-                            style={{ color: "var(--accent-hover)", background: "none", border: "none", padding: 0 }}
-                            title={`Cliquer pour copier: ${dirEmail}`}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              navigator.clipboard.writeText(dirEmail).catch(() => {/* silent */});
-                            }}
-                          >
-                            {dirEmail}
-                          </button>
+                          <div className="flex flex-col gap-1">
+                            {legacyEmails.map((le, i) => (
+                              <div key={`${lead.id}-le-${i}`} className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  className="text-xs text-left hover:underline cursor-pointer truncate max-w-[180px]"
+                                  style={{ color: le.color, background: "none", border: "none", padding: 0 }}
+                                  title={`Copier: ${le.email}`}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    navigator.clipboard.writeText(le.email).catch(() => {/* silent */});
+                                  }}
+                                >
+                                  {le.email}
+                                </button>
+                                <span
+                                  className="text-[8px] px-1 py-px rounded shrink-0 font-medium"
+                                  style={{
+                                    background: le.label === "perso" ? "rgba(99,102,241,0.12)" : "rgba(34,197,94,0.12)",
+                                    color: le.label === "perso" ? "#818cf8" : "#22c55e",
+                                  }}
+                                >
+                                  {le.label}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
                         );
                       }
+                      // No emails at all
+                      if (localResult?.error) {
+                        return <span className="text-xs" style={{ color: "var(--red)" }} title={localResult.error}>✗ {localResult.error}</span>;
+                      }
                       return (
-                        <span className="text-xs" style={{ color: "var(--text-muted)" }}>—</span>
+                        <span className="text-xs" style={{ color: "var(--text-muted)" }}>
+                          {lead.enrichment_status === "failed" ? "✗ Rien" : "—"}
+                        </span>
                       );
                     })()}
                   </td>
+                  {/* === SOURCES column — compact enrichment summary === */}
                   <td className="px-3 py-3 text-center">
                     {(() => {
-                      const localResult = enrichResults[lead.id];
-                      const hasEmail = lead.email || localResult?.email;
-                      const hasDirEmail = localResult?.emailDirigeant || lead.email_dirigeant;
-
-                      if (hasEmail && hasDirEmail) {
-                        return <span className="text-xs font-bold" style={{ color: "var(--green)" }} title={`Email dirigeant: ${hasDirEmail}`}>✓✓</span>;
+                      const emails = lead.enrichment_emails;
+                      const sources = lead.enrichment_source;
+                      if (emails.length > 0) {
+                        // Show email count + unique sources as compact badges
+                        const uniqueSources = [...new Set(emails.map((e) => e.source))];
+                        const conf = lead.enrichment_confidence;
+                        return (
+                          <div className="flex flex-col items-center gap-0.5">
+                            <span
+                              className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+                              style={{
+                                background: emails.length >= 2
+                                  ? "rgba(34,197,94,0.15)"
+                                  : "rgba(245,158,11,0.15)",
+                                color: emails.length >= 2 ? "#22c55e" : "#f59e0b",
+                              }}
+                            >
+                              {emails.length} email{emails.length > 1 ? "s" : ""}
+                            </span>
+                            <div className="flex flex-wrap justify-center gap-0.5 mt-0.5">
+                              {uniqueSources.slice(0, 3).map((src) => (
+                                <span
+                                  key={src}
+                                  className="text-[7px] px-1 py-px rounded"
+                                  style={{ background: "rgba(115,115,115,0.08)", color: "var(--text-muted)" }}
+                                >
+                                  {src}
+                                </span>
+                              ))}
+                              {uniqueSources.length > 3 && (
+                                <span className="text-[7px]" style={{ color: "var(--text-muted)" }}>+{uniqueSources.length - 3}</span>
+                              )}
+                            </div>
+                            {conf != null && conf > 0 && (
+                              <span
+                                className="text-[9px] font-medium"
+                                style={{ color: conf >= 70 ? "#22c55e" : conf >= 40 ? "#f59e0b" : "#737373" }}
+                              >
+                                {conf}%
+                              </span>
+                            )}
+                          </div>
+                        );
                       }
-                      if (hasEmail) {
-                        return <span className="text-xs font-medium" style={{ color: "var(--green)" }} title={`Email: ${hasEmail}`}>✓</span>;
-                      }
-                      if (localResult?.error) {
-                        return <span className="text-xs font-medium" style={{ color: "#ef4444" }} title={localResult.error}>✗</span>;
-                      }
-                      if (lead.enrichment_status === "failed" || lead.enrichment_status === "skipped") {
-                        return <span className="text-xs font-medium" style={{ color: "#ef4444" }} title="Rien trouve">✗</span>;
+                      // Fallback: legacy enrichment_source string
+                      if (sources) {
+                        const srcList = sources.split(",").map((s) => s.trim()).filter(Boolean);
+                        return (
+                          <div className="flex flex-col items-center gap-0.5">
+                            <div className="flex flex-wrap justify-center gap-0.5">
+                              {srcList.slice(0, 3).map((src) => (
+                                <span
+                                  key={src}
+                                  className="text-[7px] px-1 py-px rounded"
+                                  style={{ background: "rgba(115,115,115,0.08)", color: "var(--text-muted)" }}
+                                >
+                                  {src}
+                                </span>
+                              ))}
+                              {srcList.length > 3 && (
+                                <span className="text-[7px]" style={{ color: "var(--text-muted)" }}>+{srcList.length - 3}</span>
+                              )}
+                            </div>
+                          </div>
+                        );
                       }
                       return <span className="text-xs" style={{ color: "var(--text-muted)" }}>—</span>;
                     })()}
@@ -1013,7 +1078,7 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
                 {expandedLead === lead.id && (
                   <tr key={`${lead.id}-expanded`}>
                     <td
-                      colSpan={9}
+                      colSpan={8}
                       className="px-6 py-4"
                       style={{ background: "var(--bg-raised)", borderBottom: "1px solid var(--border)" }}
                     >
