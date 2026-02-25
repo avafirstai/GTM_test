@@ -21,6 +21,7 @@ import {
   computeAggregateConfidence,
   selectBestEmail,
 } from "./confidence";
+import { verifyEmailSmtp } from "./smtp-verify";
 
 /* ------------------------------------------------------------------ */
 /*  Source Registry                                                     */
@@ -310,6 +311,51 @@ export async function runWaterfall(
     // Record duration
     result.durationMs = Date.now() - sourceStart;
 
+    // --- Universal SMTP verification for every email found ---
+    // Skip for sources that already do their own SMTP check (email_permutation)
+    // and for metadata-only sources (dns_intel, linkedin_search)
+    if (
+      result.email &&
+      source.name !== "email_permutation" &&
+      source.name !== "dns_intel" &&
+      source.name !== "linkedin_search"
+    ) {
+      try {
+        const smtpResult = await verifyEmailSmtp(result.email);
+        if (smtpResult.smtpVerified) {
+          result.metadata["smtp_verified"] = "true";
+        } else if (!smtpResult.valid) {
+          // Email is invalid — mark it and clear it
+          result.metadata["smtp_invalid"] = "true";
+          console.log(
+            `[Waterfall] SMTP INVALID source=${source.name} email=*** — removing`,
+          );
+          result.email = null;
+        }
+        if (smtpResult.disposable) {
+          result.metadata["disposable_email"] = "true";
+        }
+      } catch {
+        // SMTP check failed — keep email as-is, no penalty
+      }
+    }
+
+    // Also verify DM emails found by this source
+    if (result.dirigeants && source.name !== "email_permutation") {
+      for (const dm of result.dirigeants) {
+        if (dm.email) {
+          try {
+            const dmSmtp = await verifyEmailSmtp(dm.email);
+            if (!dmSmtp.valid) {
+              dm.email = null; // Remove invalid DM email
+            }
+          } catch {
+            // Keep email as-is on verification failure
+          }
+        }
+      }
+    }
+
     // Compute confidence for this result
     result.confidence = computeConfidence(result, domain);
 
@@ -479,6 +525,7 @@ function buildEnrichmentEmails(
         type: classifyType(r.email, r.source),
         isBest: false,
         personName: findPersonName(r.email),
+        smtpVerified: r.metadata["smtp_verified"] === "true",
       });
     }
   }
@@ -496,6 +543,7 @@ function buildEnrichmentEmails(
         type: "dirigeant",
         isBest: false,
         personName: dm.name,
+        smtpVerified: existing?.smtpVerified, // Preserve SMTP status from source result
       });
     }
   }

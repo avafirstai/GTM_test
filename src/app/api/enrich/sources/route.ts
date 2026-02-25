@@ -35,13 +35,19 @@ export async function GET() {
     },
     {
       name: "email_permutation",
-      label: "Email Permutation",
+      label: "Email Permutation + SMTP",
       configured: true, // No API key needed
       tier: "fr_public" as const,
     },
     {
       name: "google_dork",
       label: "Google Dorking",
+      configured: !!process.env.GOOGLE_CSE_API_KEY && !!process.env.GOOGLE_CSE_CX,
+      tier: "freemium" as const,
+    },
+    {
+      name: "linkedin_search",
+      label: "LinkedIn Search",
       configured: !!process.env.GOOGLE_CSE_API_KEY && !!process.env.GOOGLE_CSE_CX,
       tier: "freemium" as const,
     },

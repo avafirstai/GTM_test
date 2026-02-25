@@ -9,6 +9,8 @@
  * Used by: kaspr.ts (needs LinkedIn URL as input)
  */
 
+import { canQueryGoogleCSE, recordGoogleCSEQuery } from "../google-cse-quota";
+
 /* ------------------------------------------------------------------ */
 /*  Google CSE Dork                                                    */
 /* ------------------------------------------------------------------ */
@@ -21,6 +23,12 @@ async function findViaGoogleDork(
   const apiKey = process.env.GOOGLE_CSE_API_KEY;
   const cx = process.env.GOOGLE_CSE_CX;
   if (!apiKey || !cx) return null;
+
+  // Check quota before making API call
+  if (!canQueryGoogleCSE()) {
+    console.warn("[LinkedIn Finder] Skipping — Google CSE daily quota exhausted");
+    return null;
+  }
 
   const query = `site:linkedin.com/in "${firstName} ${lastName}" "${company}"`;
 
@@ -46,6 +54,9 @@ async function findViaGoogleDork(
     clearTimeout(timeout);
 
     if (!resp.ok) return null;
+
+    // Record successful query against quota
+    recordGoogleCSEQuery(1);
 
     const data = await resp.json();
     const items = data.items || [];
