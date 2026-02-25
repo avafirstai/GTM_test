@@ -429,7 +429,8 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
   }, [selectedLeads, filteredLeads, campaignId]);
 
   const handleBulkEnrich = useCallback(async () => {
-    // Enrichir tous les leads sans email (le waterfall gere les sources)
+    // Enrichir les leads sans email, dans l'ordre d'affichage (haut → bas)
+    // filteredLeads est deja trie par score desc + id tiebreaker = ordre ecran
     const leadsToEnrich = filteredLeads.filter((l) => selectedLeads.has(l.id) && !l.email);
     if (leadsToEnrich.length === 0) {
       setBulkMessage("Aucun lead sans email dans la selection");
@@ -437,37 +438,82 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
       setTimeout(() => setBulkMessage(""), 3000);
       return;
     }
+
     setBulkAction("enriching");
-    try {
-      const res = await fetch("/api/enrich", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          leadIds: leadsToEnrich.map((l) => l.id),
-          technique: "website_scraping",
-          limit: leadsToEnrich.length,
-        }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setBulkMessage(`${data.found} emails trouves sur ${data.processed} leads`);
-        setBulkMessageType("success");
-        for (const r of data.results || []) {
-          if (r.email) {
-            setEnrichResults((prev) => ({ ...prev, [r.leadId]: { email: r.email } }));
-          }
+    setBulkMessageType("success");
+
+    const CONCURRENCY = 5;
+    const total = leadsToEnrich.length;
+    let idx = 0;
+    let done = 0;
+    let found = 0;
+
+    // Enrichir un seul lead et mettre a jour l'UI immediatement
+    const enrichOne = async (lead: (typeof leadsToEnrich)[0]): Promise<void> => {
+      // Marquer ce lead comme "en cours"
+      setEnrichingLeads((prev) => new Set([...prev, lead.id]));
+
+      try {
+        const res = await fetch("/api/enrich", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            leadIds: [lead.id],
+            technique: "website_scraping",
+            limit: 1,
+          }),
+        });
+        const data = await res.json();
+        if (data.success && data.results?.[0]?.email) {
+          found++;
+          setEnrichResults((prev) => ({ ...prev, [lead.id]: { email: data.results[0].email } }));
         }
-      } else {
-        setBulkMessage("Erreur enrichissement");
-        setBulkMessageType("error");
+      } catch {
+        // Erreur reseau — on continue avec les suivants
+      } finally {
+        done++;
+        // Retirer ce lead du set "en cours"
+        setEnrichingLeads((prev) => {
+          const next = new Set(prev);
+          next.delete(lead.id);
+          return next;
+        });
+        // Compteur live
+        setBulkMessage(`Enrichissement: ${done}/${total} (${found} emails)`);
       }
-    } catch {
-      setBulkMessage("Erreur reseau");
-      setBulkMessageType("error");
-    } finally {
-      setBulkAction("idle");
-      setTimeout(() => setBulkMessage(""), 5000);
-    }
+    };
+
+    // Pool de concurrence : 5 requetes en parallele, chaque lead 1 par 1
+    await new Promise<void>((resolve) => {
+      let running = 0;
+
+      const launchNext = () => {
+        while (running < CONCURRENCY && idx < total) {
+          const lead = leadsToEnrich[idx];
+          idx++;
+          running++;
+          enrichOne(lead).then(() => {
+            running--;
+            if (done >= total) {
+              resolve();
+            } else {
+              launchNext();
+            }
+          });
+        }
+        // Si plus rien a lancer et plus rien en cours
+        if (idx >= total && running === 0) resolve();
+      };
+
+      launchNext();
+    });
+
+    // Resultat final
+    setEnrichingLeads(new Set());
+    setBulkMessage(`${found} emails trouves sur ${done} leads`);
+    setBulkMessageType(found > 0 ? "success" : "error");
+    setBulkAction("idle");
+    setTimeout(() => setBulkMessage(""), 5000);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedLeads, filteredLeads]);
 
