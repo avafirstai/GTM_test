@@ -754,6 +754,9 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
                   className="rounded"
                 />
               </th>
+              <th className="px-3 py-2 text-center w-10" style={{ color: "var(--text-muted)" }}>
+                #
+              </th>
               <th
                 className="px-3 py-3 text-left cursor-pointer select-none"
                 onClick={() => toggleSort("nom_entreprise")}
@@ -797,7 +800,7 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
             </tr>
           </thead>
           <tbody>
-            {paginatedLeads.map((lead) => (
+            {paginatedLeads.map((lead, pageIdx) => (
               <>
                 <tr
                   key={lead.id}
@@ -823,6 +826,9 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
                       onClick={(e) => e.stopPropagation()}
                       className="rounded"
                     />
+                  </td>
+                  <td className="px-3 py-2 text-center text-xs" style={{ color: "var(--text-muted)" }}>
+                    {(safeCurrentPage - 1) * PAGE_SIZE + pageIdx + 1}
                   </td>
                   <td className="px-3 py-3">
                     <div>
