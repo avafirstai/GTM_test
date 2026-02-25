@@ -961,7 +961,7 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
                                   {de.source}
                                 </span>
                                 {/* SMTP verified badge */}
-                                {ee.smtpVerified && (
+                                {de.smtpVerified && (
                                   <span
                                     className="text-[7px] px-1 py-px rounded shrink-0 font-bold"
                                     style={{ background: "rgba(34,197,94,0.15)", color: "#22c55e" }}
