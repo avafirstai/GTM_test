@@ -11,6 +11,7 @@ import type {
   WaterfallConfig,
   EnrichmentPipelineResult,
 } from "@/lib/enrichment";
+import { parseExistingDecisionMakers, mergeDecisionMakers } from "@/lib/enrichment/merge-utils";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120; // Up to 120s for batch processing
@@ -72,7 +73,7 @@ export async function POST(request: Request) {
   // Query leads needing enrichment (have website, missing email)
   let query = supabase
     .from("gtm_leads")
-    .select("id, name, website, email, phone, city, category, score")
+    .select("id, name, website, email, phone, city, category, score, decision_makers, email_dirigeant, dirigeant, dirigeant_linkedin")
     .not("website", "is", null)
     .neq("website", "")
     .or("email.is.null,email.eq.")
@@ -161,27 +162,57 @@ export async function POST(request: Request) {
         if (sr.siret) sourceStats[sr.source].siretFound++;
       }
 
-      // Update Supabase with best results
-      if (result.bestEmail || result.bestPhone || result.siret || result.dirigeant) {
-        enrichedCount++;
+      // Update Supabase — full persistence (aligned with /v2/single)
+      const foundSomething =
+        result.bestEmail || result.bestPhone || result.siret || result.dirigeant;
 
-        const updateData: Record<string, unknown> = {};
-        if (result.bestEmail) updateData.email = result.bestEmail;
-        if (result.bestPhone) updateData.phone = result.bestPhone;
-        if (result.siret) updateData.siret = result.siret;
-        if (result.dirigeant) updateData.dirigeant = result.dirigeant;
-        if (result.dirigeantLinkedin) updateData.dirigeant_linkedin = result.dirigeantLinkedin;
-        if (result.mxProvider) updateData.mx_provider = result.mxProvider;
-        updateData.has_mx = result.hasMx;
-        updateData.enrichment_source = result.sourcesTried.join(",");
-        updateData.enrichment_confidence = result.finalConfidence;
-        updateData.enriched_at = new Date().toISOString();
+      // Find the original lead to merge existing DMs
+      const originalLead = enrichmentLeads.find((l) => l.id === result.leadId);
+      const dbLead = leads?.find((l) => l.id === result.leadId) as Record<string, unknown> | undefined;
+      const existingDMs = parseExistingDecisionMakers(dbLead?.decision_makers);
+      const mergedDMs = mergeDecisionMakers(existingDMs, result.decisionMakers ?? []);
 
-        await supabase
-          .from("gtm_leads")
-          .update(updateData)
-          .eq("id", result.leadId);
+      if (foundSomething) enrichedCount++;
+
+      const updateData: Record<string, unknown> = {
+        enrichment_source: result.sourcesTried.join(","),
+        enrichment_confidence: foundSomething ? result.finalConfidence : 0,
+        enrichment_status: foundSomething ? "enriched" : (existingDMs.length > 0 ? "enriched" : "failed"),
+        enriched_at: new Date().toISOString(),
+        has_mx: result.hasMx,
+      };
+
+      if (result.bestEmail) updateData.email = result.bestEmail;
+      if (result.emailGlobal) updateData.email_global = result.emailGlobal;
+      if (result.emailDirigeant) {
+        updateData.email_dirigeant = result.emailDirigeant;
+      } else if (dbLead?.email_dirigeant) {
+        updateData.email_dirigeant = dbLead.email_dirigeant;
       }
+      if (result.bestPhone) updateData.phone = result.bestPhone;
+      if (result.siret) updateData.siret = result.siret;
+      if (result.dirigeant) {
+        updateData.dirigeant = result.dirigeant;
+      } else if (dbLead?.dirigeant) {
+        updateData.dirigeant = dbLead.dirigeant;
+      }
+      if (result.dirigeantLinkedin) {
+        updateData.dirigeant_linkedin = result.dirigeantLinkedin;
+      } else if (dbLead?.dirigeant_linkedin) {
+        updateData.dirigeant_linkedin = dbLead.dirigeant_linkedin;
+      }
+      if (result.mxProvider) updateData.mx_provider = result.mxProvider;
+      if (mergedDMs.length > 0) {
+        updateData.decision_makers = mergedDMs;
+      }
+      if (result.enrichmentEmails && result.enrichmentEmails.length > 0) {
+        updateData.enrichment_emails = result.enrichmentEmails;
+      }
+
+      await supabase
+        .from("gtm_leads")
+        .update(updateData)
+        .eq("id", result.leadId);
     }
   }
 
