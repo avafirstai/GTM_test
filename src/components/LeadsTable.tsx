@@ -177,7 +177,15 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
   const [selectedLeads, setSelectedLeads] = useState<Set<string>>(new Set());
   const [expandedLead, setExpandedLead] = useState<string | null>(null);
   const [enrichingLeads, setEnrichingLeads] = useState<Set<string>>(new Set());
-  const [enrichResults, setEnrichResults] = useState<Record<string, { email?: string; error?: string }>>({});
+  const [enrichResults, setEnrichResults] = useState<Record<string, {
+    email?: string;
+    phone?: string;
+    dirigeant?: string;
+    siret?: string;
+    confidence?: number;
+    sourcesTried?: string[];
+    error?: string;
+  }>>({});
   const [bulkAction, setBulkAction] = useState<"idle" | "exporting" | "sending" | "enriching">("idle");
   const [bulkMessage, setBulkMessage] = useState<string>("");
   const [bulkMessageType, setBulkMessageType] = useState<"success" | "error">("success");
@@ -194,17 +202,28 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
     if (!lead.site_web || lead.email) return;
     setEnrichingLeads((prev) => new Set([...prev, lead.id]));
     try {
-      const res = await fetch("/api/enrich", {
+      const res = await fetch("/api/enrich/v2/single", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ leadIds: [lead.id], technique: "website_scraping", limit: 1 }),
+        body: JSON.stringify({ leadId: lead.id }),
       });
       const data = await res.json();
-      if (data.results && data.results.length > 0) {
-        const result = data.results[0];
+      if (data.success && data.bestEmail) {
         setEnrichResults((prev) => ({
           ...prev,
-          [lead.id]: result.email ? { email: result.email } : { error: result.error || "Aucun email trouve" },
+          [lead.id]: {
+            email: data.bestEmail,
+            phone: data.bestPhone || undefined,
+            dirigeant: data.dirigeant || undefined,
+            siret: data.siret || undefined,
+            confidence: data.confidence,
+            sourcesTried: data.sourcesTried,
+          },
+        }));
+      } else {
+        setEnrichResults((prev) => ({
+          ...prev,
+          [lead.id]: { error: data.error || "Aucun email trouve", sourcesTried: data.sourcesTried },
         }));
       }
     } catch {
@@ -450,35 +469,41 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
     setBulkAction("enriching");
     setBulkMessageType("success");
 
-    const CONCURRENCY = 5;
+    const CONCURRENCY = 10;
     const total = leadsToEnrich.length;
     let idx = 0;
     let done = 0;
     let found = 0;
 
-    // Enrichir un seul lead et mettre a jour l'UI immediatement
+    // Enrichir un seul lead via waterfall v2 et mettre a jour l'UI immediatement
     const enrichOne = async (lead: (typeof leadsToEnrich)[0]): Promise<void> => {
       // Marquer ce lead comme "en cours"
       setEnrichingLeads((prev) => new Set([...prev, lead.id]));
 
       try {
-        const res = await fetch("/api/enrich", {
+        const res = await fetch("/api/enrich/v2/single", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            leadIds: [lead.id],
-            technique: "website_scraping",
-            limit: 1,
-          }),
+          body: JSON.stringify({ leadId: lead.id }),
         });
         const data = await res.json();
-        if (data.success && data.results?.[0]?.email) {
+        if (data.success && data.bestEmail) {
           found++;
-          setEnrichResults((prev) => ({ ...prev, [lead.id]: { email: data.results[0].email } }));
+          setEnrichResults((prev) => ({
+            ...prev,
+            [lead.id]: {
+              email: data.bestEmail,
+              phone: data.bestPhone || undefined,
+              dirigeant: data.dirigeant || undefined,
+              siret: data.siret || undefined,
+              confidence: data.confidence,
+              sourcesTried: data.sourcesTried,
+            },
+          }));
         } else {
           setEnrichResults((prev) => ({
             ...prev,
-            [lead.id]: { error: data.results?.[0]?.error || "Aucun email trouve" },
+            [lead.id]: { error: data.error || "Aucun email trouve", sourcesTried: data.sourcesTried },
           }));
         }
       } catch {
@@ -499,7 +524,7 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
       }
     };
 
-    // Pool de concurrence : 5 requetes en parallele, chaque lead 1 par 1
+    // Pool de concurrence : 10 requetes en parallele, chaque lead 1 par 1
     await new Promise<void>((resolve) => {
       let running = 0;
 
@@ -912,7 +937,7 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
                 {expandedLead === lead.id && (
                   <tr key={`${lead.id}-expanded`}>
                     <td
-                      colSpan={9}
+                      colSpan={10}
                       className="px-6 py-4"
                       style={{ background: "var(--bg-raised)", borderBottom: "1px solid var(--border)" }}
                     >
@@ -965,6 +990,53 @@ export function LeadsTable({ leads, initialFilters, campaignId }: LeadsTableProp
                                 </a>
                               </p>
                             )}
+                            {/* Enrichissement data — inline dans la colonne Info */}
+                            {(() => {
+                              const er = enrichResults[lead.id];
+                              const dirigeantVal = er?.dirigeant || lead.dirigeant;
+                              const siretVal = er?.siret || lead.siret;
+                              const confVal = er?.confidence ?? lead.enrichment_confidence;
+                              const sourcesVal = er?.sourcesTried?.join(", ") || lead.enrichment_source;
+                              if (!dirigeantVal && !siretVal && confVal == null && !sourcesVal && !er?.phone) return null;
+                              return (
+                                <div className="mt-2 pt-2" style={{ borderTop: "1px solid var(--border)" }}>
+                                  {dirigeantVal && (
+                                    <p>
+                                      <span style={{ color: "var(--text-muted)" }}>Dirigeant:</span>{" "}
+                                      <span className="font-medium">{dirigeantVal}</span>
+                                    </p>
+                                  )}
+                                  {siretVal && (
+                                    <p>
+                                      <span style={{ color: "var(--text-muted)" }}>SIRET:</span>{" "}
+                                      <span className="font-mono text-xs">{siretVal}</span>
+                                    </p>
+                                  )}
+                                  {confVal != null && (
+                                    <p>
+                                      <span style={{ color: "var(--text-muted)" }}>Confiance:</span>{" "}
+                                      <span className="font-medium" style={{ color: confVal >= 70 ? "var(--green)" : "var(--text-secondary)" }}>
+                                        {confVal}%
+                                      </span>
+                                    </p>
+                                  )}
+                                  {sourcesVal && (
+                                    <p>
+                                      <span style={{ color: "var(--text-muted)" }}>Sources:</span>{" "}
+                                      <span className="text-xs" style={{ color: "var(--text-secondary)" }}>
+                                        {sourcesVal}
+                                      </span>
+                                    </p>
+                                  )}
+                                  {er?.phone && (
+                                    <p>
+                                      <span style={{ color: "var(--text-muted)" }}>Tél dirigeant:</span>{" "}
+                                      {er.phone}
+                                    </p>
+                                  )}
+                                </div>
+                              );
+                            })()}
                           </div>
                         </div>
                         {/* Pitch */}
