@@ -158,8 +158,8 @@ export const DEFAULT_SOURCES: EnrichmentSource[] = [
   { name: "deep_scrape",        priority: 3, enabled: true,  tier: "free" },
   { name: "sirene",             priority: 4, enabled: true,  tier: "fr_public" },
   { name: "email_permutation",  priority: 5, enabled: true,  tier: "fr_public" },
-  { name: "google_dork",        priority: 6, enabled: false, tier: "freemium" }, // Off by default (100/day limit)
-  { name: "linkedin_search",   priority: 7, enabled: false, tier: "freemium" }, // Requires Google CSE or Apollo
+  { name: "google_dork",        priority: 6, enabled: true,  tier: "freemium" }, // Graceful no-op if GOOGLE_CSE env vars missing
+  { name: "linkedin_search",   priority: 7, enabled: true,  tier: "freemium" }, // Graceful no-op if Apollo/CSE env vars missing
   { name: "kaspr",              priority: 8, enabled: false, tier: "paid" },     // Opt-in only
 ];
 
@@ -167,7 +167,7 @@ export const DEFAULT_WATERFALL_CONFIG: WaterfallConfig = {
   sources: DEFAULT_SOURCES,
   stopOnConfidence: 80,
   maxSources: 8,
-  timeoutPerSource: 10_000,
+  timeoutPerSource: 5_000,
   useKaspr: false,
   minScoreForPaid: 30,
 };

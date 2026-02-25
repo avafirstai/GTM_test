@@ -115,16 +115,15 @@ export async function POST(request: Request) {
     if (result.dirigeantLinkedin) updateData.dirigeant_linkedin = result.dirigeantLinkedin;
     if (result.mxProvider) updateData.mx_provider = result.mxProvider;
 
-    // Fire-and-forget DB write (don't block response)
-    supabase
+    // Await DB write — guarantee persistence before responding
+    const { error: updateError } = await supabase
       .from("gtm_leads")
       .update(updateData)
-      .eq("id", lead.id)
-      .then(({ error: updateError }) => {
-        if (updateError) {
-          console.error(`[enrich/v2/single] DB update failed for ${lead.id}:`, updateError.message);
-        }
-      });
+      .eq("id", lead.id);
+
+    if (updateError) {
+      console.error(`[enrich/v2/single] DB update failed for ${lead.id}:`, updateError.message);
+    }
 
     return NextResponse.json({
       success: true,
@@ -141,20 +140,19 @@ export async function POST(request: Request) {
       durationMs: result.durationMs,
     });
   } catch (err) {
-    // Waterfall threw — mark as failed
-    supabase
+    // Waterfall threw — mark as failed (await to guarantee persistence)
+    const { error: failUpdateError } = await supabase
       .from("gtm_leads")
       .update({
         enrichment_status: "failed",
         enrichment_confidence: 0,
         enriched_at: new Date().toISOString(),
       })
-      .eq("id", lead.id)
-      .then(({ error: updateError }) => {
-        if (updateError) {
-          console.error(`[enrich/v2/single] DB failure-update failed for ${lead.id}:`, updateError.message);
-        }
-      });
+      .eq("id", lead.id);
+
+    if (failUpdateError) {
+      console.error(`[enrich/v2/single] DB failure-update failed for ${lead.id}:`, failUpdateError.message);
+    }
 
     return NextResponse.json({
       success: false,

@@ -24,6 +24,7 @@ export default function LeadsPage() {
   const [total, setTotal] = useState(0);
   const [stats, setStats] = useState<StatsData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [loadedCount, setLoadedCount] = useState(0);
   const [loadingMore, setLoadingMore] = useState(false);
   const { data: campaignData } = useCampaigns();
@@ -48,11 +49,19 @@ export default function LeadsPage() {
   const paramsKey = searchParams.toString();
 
   const loadLeads = useCallback(async (offset = 0, append = false, search = "") => {
-    if (!append) setLoading(true);
-    else setLoadingMore(true);
+    if (append) {
+      setLoadingMore(true);
+    } else if (leads.length === 0) {
+      // Full-screen spinner only on very first load (empty state)
+      setLoading(true);
+    } else {
+      // Soft refresh — keeps table visible, shows subtle indicator
+      setRefreshing(true);
+    }
 
     try {
       const BATCH = 2000;
+      const fetchStats = !append && !search;
       const [leadsRes, statsRes] = await Promise.all([
         fetchLeads({
           limit: BATCH,
@@ -64,8 +73,8 @@ export default function LeadsPage() {
           ...(verticaleParams.length > 0 ? { category: verticaleParams } : {}),
           ...(hasEmailParam === "yes" || hasEmailParam === "no" ? { hasEmail: hasEmailParam } : {}),
         }),
-        // Only fetch stats on initial load, not on "load more"
-        ...(append ? [] : [fetch("/api/stats").then((r) => r.json())]),
+        // Only fetch stats on initial load (not on "load more" or search)
+        ...(fetchStats ? [fetch("/api/stats").then((r) => r.json())] : []),
       ]);
 
       if (append) {
@@ -77,11 +86,11 @@ export default function LeadsPage() {
         setLoadedCount(leadsRes.leads.length);
         if (statsRes) setStats(statsRes.stats);
       }
-      if (!append) setTotal(leadsRes.total);
     } catch (err) {
       console.error("Failed to load leads:", err);
     } finally {
       setLoading(false);
+      setRefreshing(false);
       setLoadingMore(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -144,7 +153,17 @@ export default function LeadsPage() {
       </div>
 
       {/* Table */}
-      <LeadsTable leads={leads} initialFilters={initialFilters} campaignId={campaignData?.activeCampaignId ?? undefined} onSearchChange={handleSearchChange} />
+      <div className="relative">
+        {refreshing && (
+          <div className="absolute top-0 left-0 right-0 z-10 flex justify-center">
+            <div className="px-3 py-1 rounded-b-lg text-xs font-medium flex items-center gap-1.5" style={{ background: "var(--accent-subtle)", color: "var(--accent-hover)" }}>
+              <div className="w-3 h-3 border-2 border-[var(--accent)] border-t-transparent rounded-full animate-spin" />
+              Recherche...
+            </div>
+          </div>
+        )}
+        <LeadsTable leads={leads} initialFilters={initialFilters} campaignId={campaignData?.activeCampaignId ?? undefined} onSearchChange={handleSearchChange} />
+      </div>
 
       {/* Load more / Info */}
       <div className="text-center mt-6 space-y-2">
