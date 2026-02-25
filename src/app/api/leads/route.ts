@@ -19,7 +19,7 @@ export async function GET(request: Request) {
   let query = supabase
     .from("gtm_leads")
     .select(
-      "id, name, city, phone, website, email, email_dirigeant, category, rating, reviews, score, address, apify_run, created_at, siret, dirigeant, dirigeant_linkedin, mx_provider, has_mx, enrichment_source, enrichment_confidence, enriched_at, enrichment_status, enrichment_attempts, enrichment_failed_at, google_maps_url, source",
+      "id, name, city, phone, website, email, email_global, email_dirigeant, category, rating, reviews, score, address, apify_run, created_at, siret, dirigeant, dirigeant_linkedin, mx_provider, has_mx, enrichment_source, enrichment_confidence, enriched_at, enrichment_status, enrichment_attempts, enrichment_failed_at, google_maps_url, source",
       { count: "exact" }
     );
 

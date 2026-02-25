@@ -39,6 +39,8 @@ interface EnrichStreamRequest {
   // New: multi-select filters
   categories?: string[];
   cities?: string[];
+  // Re-enrichment filter: which leads to target
+  enrichmentFilter?: "pending" | "failed" | "no_email" | "all";
 }
 
 /* ------------------------------------------------------------------ */
@@ -91,14 +93,33 @@ export async function POST(request: Request) {
   // Query leads needing enrichment
   // ONLY pending leads — failed/skipped/enriched are excluded
   // ----------------------------------------------------------------
+  const enrichmentFilter = body.enrichmentFilter ?? "pending";
+
   let query = supabase
     .from("gtm_leads")
     .select("id, name, website, email, phone, city, category, score, enrichment_attempts")
     .not("website", "is", null)
     .neq("website", "")
-    .or("email.is.null,email.eq.")
-    .eq("enrichment_status", "pending") // <-- KEY: only pending leads
     .limit(limit);
+
+  // Dynamic enrichment filter — controls which leads are eligible
+  switch (enrichmentFilter) {
+    case "pending":
+      // Default: only untried leads without email
+      query = query.or("email.is.null,email.eq.").eq("enrichment_status", "pending");
+      break;
+    case "failed":
+      // Re-enrich failed/skipped leads
+      query = query.or("enrichment_status.eq.failed,enrichment_status.eq.skipped");
+      break;
+    case "no_email":
+      // All leads without email, regardless of status
+      query = query.or("email.is.null,email.eq.");
+      break;
+    case "all":
+      // Force re-enrichment of everything (no status/email filter)
+      break;
+  }
 
   if (body.leadIds && body.leadIds.length > 0) {
     query = query.in("id", body.leadIds);
@@ -429,6 +450,8 @@ export async function POST(request: Request) {
               if (result.siret) updateData.siret = result.siret;
               if (result.dirigeant) updateData.dirigeant = result.dirigeant;
               if (result.dirigeantLinkedin) updateData.dirigeant_linkedin = result.dirigeantLinkedin;
+              if (result.emailGlobal) updateData.email_global = result.emailGlobal;
+              if (result.emailDirigeant) updateData.email_dirigeant = result.emailDirigeant;
               if (result.mxProvider) updateData.mx_provider = result.mxProvider;
               updateData.has_mx = result.hasMx;
 
@@ -474,6 +497,8 @@ export async function POST(request: Request) {
               name: lead.name,
               status: foundSomething ? "enriched" : "failed",
               bestEmail: result.bestEmail ?? null,
+              emailGlobal: result.emailGlobal ?? null,
+              emailDirigeant: result.emailDirigeant ?? null,
               bestPhone: result.bestPhone ?? null,
               dirigeant: result.dirigeant ?? null,
               siret: result.siret ?? null,

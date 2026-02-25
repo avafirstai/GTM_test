@@ -208,6 +208,7 @@ export default function EnrichmentPage() {
   const [useKaspr, setUseKaspr] = useState(false);
   const [enrichLimit, setEnrichLimit] = useState(20);
   const [stopOnConfidence, setStopOnConfidence] = useState(80);
+  const [enrichmentFilter, setEnrichmentFilter] = useState<"pending" | "failed" | "no_email" | "all">("pending");
 
   // Multi-select filters
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
@@ -538,6 +539,7 @@ export default function EnrichmentPage() {
             stopOnConfidence,
             useKaspr,
             minScoreForPaid: 0,
+            enrichmentFilter,
           }),
         });
 
@@ -693,7 +695,7 @@ export default function EnrichmentPage() {
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sources, enrichLimit, stopOnConfidence, useKaspr, startTimer, stopTimer],
+    [sources, enrichLimit, stopOnConfidence, useKaspr, enrichmentFilter, startTimer, stopTimer],
   );
 
   const runEnrichAll = useCallback(() => {
@@ -977,13 +979,27 @@ export default function EnrichmentPage() {
 
           {/* Run Buttons */}
           <div className="flex items-center justify-between pt-3 border-t border-[var(--border)]">
-            <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>
-              {enabledCount} sources actives &middot; {(stats.withWebsite - stats.withEmail).toLocaleString()} leads avec site web sans email
-              {(selectedCategories.length > 0 || selectedCities.length > 0) && (
-                <span style={{ color: "var(--accent-hover)" }}>
-                  {" "}&middot; Filtre: {[...selectedCategories, ...selectedCities].join(", ")}
-                </span>
-              )}
+            <div className="flex items-center gap-3">
+              <div className="text-[10px]" style={{ color: "var(--text-muted)" }}>
+                {enabledCount} sources actives &middot; {(stats.withWebsite - stats.withEmail).toLocaleString()} leads avec site web sans email
+                {(selectedCategories.length > 0 || selectedCities.length > 0) && (
+                  <span style={{ color: "var(--accent-hover)" }}>
+                    {" "}&middot; Filtre: {[...selectedCategories, ...selectedCities].join(", ")}
+                  </span>
+                )}
+              </div>
+              <select
+                value={enrichmentFilter}
+                onChange={(e) => setEnrichmentFilter(e.target.value as "pending" | "failed" | "no_email" | "all")}
+                disabled={status === "running"}
+                className="text-[11px] px-2 py-1 rounded-md border border-[var(--border)] disabled:opacity-50"
+                style={{ background: "var(--bg-raised)", color: "var(--text-primary)" }}
+              >
+                <option value="pending">Non tentes</option>
+                <option value="failed">Echecs (re-enrichir)</option>
+                <option value="no_email">Sans email</option>
+                <option value="all">Tous (force)</option>
+              </select>
             </div>
             <button
               onClick={runEnrichAll}

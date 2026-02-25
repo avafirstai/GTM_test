@@ -108,6 +108,7 @@ export async function POST(request: Request) {
     // Persist best email (prefer dirigeant > global for main email column)
     if (result.bestEmail) updateData.email = result.bestEmail;
     // Persist dirigeant email separately (personal email of the decision-maker)
+    if (result.emailGlobal) updateData.email_global = result.emailGlobal;
     if (result.emailDirigeant) updateData.email_dirigeant = result.emailDirigeant;
     if (result.bestPhone) updateData.phone = result.bestPhone;
     if (result.siret) updateData.siret = result.siret;
