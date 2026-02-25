@@ -196,8 +196,6 @@ async function sireneSource(
   lead: EnrichmentLeadInput,
   context: EnrichmentContext,
 ): Promise<EnrichmentResult> {
-  const company = await searchSirene(lead.name, lead.city);
-
   const emptyResult: EnrichmentResult = {
     email: null,
     phone: null,
@@ -207,6 +205,26 @@ async function sireneSource(
     confidence: 0,
     metadata: {},
   };
+
+  // Strategy: 3 attempts with decreasing precision
+  // 1. Name + city (most precise)
+  let company = await searchSirene(lead.name, lead.city);
+
+  // 2. Name only — no city filter (HQ may be in a different city)
+  if (!company) {
+    company = await searchSirene(lead.name);
+  }
+
+  // 3. Domain name as query (e.g. "dupont-dentiste" from dupont-dentiste.fr)
+  if (!company && context.domain) {
+    const domainName = context.domain
+      .replace(/\.(fr|com|net|org|eu|paris|bzh|io|co)$/i, "")
+      .replace(/[-_]/g, " ")
+      .trim();
+    if (domainName.length >= 3 && domainName.toLowerCase() !== lead.name.toLowerCase()) {
+      company = await searchSirene(domainName, lead.city);
+    }
+  }
 
   if (!company) return emptyResult;
 

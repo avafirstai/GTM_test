@@ -71,19 +71,20 @@ function generatePermutations(
 
   const fi = f[0]; // First initial
 
+  // Ordered by FR frequency: prenom.nom, prenom, j.nom, nom.prenom, nom, ...
   const permutations = [
-    `${f}.${l}@${domain}`,        // jean.dupont@
-    `${f}${l}@${domain}`,          // jeandupont@
-    `${fi}.${l}@${domain}`,        // j.dupont@
-    `${fi}${l}@${domain}`,         // jdupont@
-    `${l}.${f}@${domain}`,         // dupont.jean@
-    `${l}${f}@${domain}`,          // dupontjean@
-    `${f}@${domain}`,              // jean@
-    `${l}@${domain}`,              // dupont@
-    `${f}-${l}@${domain}`,         // jean-dupont@
-    `${f}_${l}@${domain}`,         // jean_dupont@
-    `${fi}${l[0]}@${domain}`,      // jd@ (initials only — rare)
-    `contact@${domain}`,           // Fallback generic
+    `${f}.${l}@${domain}`,        // 1. jean.dupont@ — THE FR standard
+    `${f}@${domain}`,              // 2. jean@ — très courant TPE/PME
+    `${fi}.${l}@${domain}`,        // 3. j.dupont@ — format pro
+    `${l}.${f}@${domain}`,         // 4. dupont.jean@ — variante
+    `${l}@${domain}`,              // 5. dupont@ — courant TPE
+    `${f}${l}@${domain}`,          // 6. jeandupont@
+    `${fi}${l}@${domain}`,         // 7. jdupont@
+    `${l}${f}@${domain}`,          // 8. dupontjean@
+    `${f}-${l}@${domain}`,         // 9. jean-dupont@
+    `${f}_${l}@${domain}`,         // 10. jean_dupont@
+    `${fi}${l[0]}@${domain}`,      // 11. jd@ — rare initials
+    `contact@${domain}`,           // 12. generic fallback
   ];
 
   // Deduplicate
@@ -108,7 +109,7 @@ async function verifyEmail(email: string): Promise<VerifyResult> {
   // Strategy: Try eva.pingutil.com (free, no auth, unlimited)
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
+    const timeout = setTimeout(() => controller.abort(), 8000);
 
     const resp = await fetch(
       `https://api.eva.pingutil.com/email?email=${encodeURIComponent(email)}`,
@@ -190,8 +191,8 @@ async function emailPermutationSource(
 
   if (permutations.length === 0) return emptyResult;
 
-  // Verify permutations — try up to 6 (to save API calls)
-  const maxVerifications = 6;
+  // Verify ALL permutations — FR patterns (prenom@, nom@) can be late in list
+  const maxVerifications = 12;
   const toVerify = permutations.slice(0, maxVerifications);
 
   // Run verifications in parallel (they're fast)

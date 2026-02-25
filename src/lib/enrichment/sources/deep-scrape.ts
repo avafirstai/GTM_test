@@ -50,6 +50,9 @@ const TEL_REGEX = /href\s*=\s*["']tel:([^"']+)["']/gi;
 const FR_PHONE_REGEX =
   /(?:(?:\+33|0033|0)\s?[1-9])(?:[\s.\-]?\d{2}){4}/g;
 
+/** SIRET regex — 14 digits, optionally spaced (123 456 789 00012) */
+const SIRET_REGEX = /(?:siret|SIRET|Siret)\s*[:.]?\s*(\d{3}\s?\d{3}\s?\d{3}\s?\d{5})/;
+
 /** Obfuscated email patterns */
 const OBFUSCATION_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
   { pattern: /\s*\[at\]\s*/gi, replacement: "@" },
@@ -116,6 +119,19 @@ async function fetchPage(url: string): Promise<string | null> {
 }
 
 /* ------------------------------------------------------------------ */
+/*  SIRET Extraction                                                   */
+/* ------------------------------------------------------------------ */
+
+function extractSiret(html: string): string | null {
+  const textOnly = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+  const match = SIRET_REGEX.exec(textOnly);
+  if (match?.[1]) {
+    return match[1].replace(/\s/g, ""); // Remove spaces → pure 14 digits
+  }
+  return null;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Email Extraction                                                   */
 /* ------------------------------------------------------------------ */
 
@@ -161,6 +177,24 @@ function extractEmails(html: string): string[] {
   const emailRegex = new RegExp(EMAIL_REGEX.source, "g");
   while ((match = emailRegex.exec(deobfuscated)) !== null) {
     const email = match[0].toLowerCase().trim();
+    if (isValidContactEmail(email)) {
+      emails.add(email);
+    }
+  }
+
+  // 3. Extract from meta tags (often hidden from visible HTML)
+  const metaEmailRegex = /<meta[^>]*content\s*=\s*["']([^"']*@[^"']*\.[a-zA-Z]{2,})["'][^>]*>/gi;
+  while ((match = metaEmailRegex.exec(html)) !== null) {
+    const email = match[1].toLowerCase().trim();
+    if (isValidContactEmail(email)) {
+      emails.add(email);
+    }
+  }
+
+  // 4. Extract from <link rel="author" href="mailto:...">
+  const linkAuthorRegex = /<link[^>]*href\s*=\s*["']mailto:([^"']+)["'][^>]*>/gi;
+  while ((match = linkAuthorRegex.exec(html)) !== null) {
+    const email = match[1].toLowerCase().trim();
     if (isValidContactEmail(email)) {
       emails.add(email);
     }
@@ -374,6 +408,7 @@ async function deepScrapeSource(
   const allPhones: string[] = [];
   let pagesScraped = 0;
   let foundDirigeant: { name: string; title: string } | null = null;
+  let foundSiret: string | null = null;
 
   for (let i = 0; i < htmlResults.length; i++) {
     const result = htmlResults[i];
@@ -383,6 +418,11 @@ async function deepScrapeSource(
     const html = result.value;
     allEmails.push(...extractEmails(html));
     allPhones.push(...extractPhones(html));
+
+    // Extract SIRET from legal pages (obligation légale FR)
+    if (!foundSiret) {
+      foundSiret = extractSiret(html);
+    }
 
     // Try to extract dirigeant from ALL pages (subpages first, homepage last)
     // Skip homepage (i=0) in this loop — we try it as fallback below
@@ -421,11 +461,15 @@ async function deepScrapeSource(
     metadata["dirigeant_title"] = foundDirigeant.title;
   }
 
+  if (foundSiret) {
+    metadata["siret_source"] = "mentions_legales";
+  }
+
   return {
     email: bestEmail,
     phone: bestPhone,
     dirigeant: foundDirigeant?.name ?? null,
-    siret: null,
+    siret: foundSiret,
     source: "deep_scrape",
     confidence: 0, // Will be set by computeConfidence
     metadata,

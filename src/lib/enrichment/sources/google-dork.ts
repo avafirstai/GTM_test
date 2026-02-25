@@ -146,23 +146,23 @@ async function googleDorkSource(
     };
   }
 
-  // Build search queries
-  const queries = [
-    `"@${domain}" email`, // Find pages mentioning emails for this domain
-  ];
-
-  // If we have a dirigeant name, search LinkedIn for their profile
+  // Build search queries — OPTIMIZED: 1 query when dirigeant known (saves CSE quota)
+  // With dirigeant: LinkedIn URL is the priority (email comes from email_permutation)
+  // Without dirigeant: email search is the fallback
+  let queries: string[];
   if (context.accumulated.dirigeant) {
     const companyName = lead.name.replace(/\b(sarl|sas|sa|eurl|sasu)\b/gi, "").trim();
-    queries.push(
+    queries = [
       `site:linkedin.com/in "${context.accumulated.dirigeant}" "${companyName}"`,
-    );
+    ];
+  } else {
+    queries = [`"@${domain}" email`];
   }
 
-  // Run primary query (email search)
+  // Run the single query (saves 50% CSE quota when dirigeant known)
   const searchResult = await googleSearch(queries[0], apiKey, cx);
 
-  // Extract emails from all snippets
+  // Extract emails AND LinkedIn URLs from results
   const allEmails: string[] = [];
   const allLinkedInUrls: string[] = [];
   let pagesFound = 0;
@@ -172,33 +172,13 @@ async function googleDorkSource(
       pagesFound++;
       const text = `${item.title} ${item.snippet} ${item.link}`;
 
-      // Extract emails
+      // Extract emails (even from LinkedIn query — snippets may contain them)
       const emails = extractEmailsFromText(text, domain);
       allEmails.push(...emails);
 
-      // Extract LinkedIn URLs (bonus data)
+      // Extract LinkedIn URLs
       const linkedInUrls = extractLinkedInUrls(text);
       allLinkedInUrls.push(...linkedInUrls);
-    }
-  }
-
-  // Run secondary query: targeted LinkedIn search for dirigeant
-  // This was previously dead code — the 2nd query was built but never executed
-  if (queries.length > 1) {
-    const linkedInResult = await googleSearch(queries[1], apiKey, cx);
-    if (linkedInResult?.items) {
-      for (const item of linkedInResult.items) {
-        pagesFound++;
-        const text = `${item.title} ${item.snippet} ${item.link}`;
-
-        // Primary goal: find LinkedIn URLs
-        const linkedInUrls = extractLinkedInUrls(text);
-        allLinkedInUrls.push(...linkedInUrls);
-
-        // Secondary: emails found in snippets
-        const emails = extractEmailsFromText(text, domain);
-        allEmails.push(...emails);
-      }
     }
   }
 
