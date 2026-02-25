@@ -498,11 +498,11 @@ function classifyEmails(
  * Sources that REQUIRE MX records to work (they verify/generate emails).
  * schema_org and deep_scrape are NOT in this set — they find emails
  * published on web pages via HTML parsing, independent of MX records.
+ * Kaspr is NOT here — it enriches from LinkedIn profiles, not domain MX.
  */
 const EMAIL_SOURCES = new Set([
   "email_permutation",
   "google_dork",
-  "kaspr",
 ]);
 
 function isEmailSource(name: string): boolean {

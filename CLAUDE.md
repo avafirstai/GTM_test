@@ -9,8 +9,8 @@
 ## Mission
 
 Plateforme GTM 100% autonome qui :
-1. **Scrape** des leads B2B depuis Google Maps (gratuit, Playwright + Apify)
-2. **Enrichit** chaque lead avec un email pro (scraping sites web, objectif 40-65% hit rate)
+1. **Scrape** des leads B2B depuis Google Maps (gratuit, )
+2. **Enrichit** chaque lead avec plusierus  email pro ()
 3. **Score** chaque lead (formule ponderee, 0-100)
 4. **Uploade** dans Instantly pour des campagnes email automatisees
 5. **Synchronise** avec Notion CRM pour pipeline tracking
@@ -20,22 +20,7 @@ Plateforme GTM 100% autonome qui :
 
 **Objectif final : 500 emails = 1 client payant a 199 EUR/mois MRR.**
 
----
 
-## Etat Actuel (Checkpoint)
-
-| Metrique | Valeur | Status |
-|----------|--------|--------|
-| Leads scrapes | 8,360 | FAIT |
-| Leads dans Supabase | 8,360 | FAIT |
-| Leads avec site web | ~7,415 (88.9%) | FAIT |
-| Leads avec telephone | ~8,017 (95.9%) | FAIT |
-| Leads avec email | 14 (0.17%) | QUASI ZERO — enrichissement a relancer |
-| Campagnes Instantly | 0 | A LANCER |
-| Dashboard live | Oui (Supabase + 30s refresh) | OPERATIONNEL |
-| Pipeline cron | Pret (run_pipeline.sh) | A ACTIVER |
-
----
 
 ## Architecture
 
@@ -164,48 +149,9 @@ GTM_test/
 └── vercel.json                  # Config Vercel
 ```
 
----
 
-## Problemes Connus (Audit Fevrier 2026)
 
-### CRITIQUES (a fixer avant tout)
-1. **Credentials hardcodees** dans `email_scraper.py` (L37-41) et `import_to_supabase.py` (L11-12) — Supabase URL + anon key en clair dans le code source
-2. **SSL=False** dans `email_scraper.py` — verification SSL desactivee
-3. **leads-data.ts = 323KB** — 500 leads hardcodes dans le bundle JS client
 
-### ARCHITECTURAUX
-4. **Dual data** — Sidebar (data.ts statique) vs Dashboard (Supabase live) = chiffres incoherents
-5. **API /api/stats** — fetche 8,360 rows entieres et compute en memoire (pas de GROUP BY cote DB)
-6. **launch/page.tsx** — simulation pure (setTimeout), zero connexion backend
-7. **Verticales dupliquees** — launch/page.tsx (20 inline) vs verticales.ts (14 officielles)
-
-### FONCTIONNELS
-8. **14 emails seulement** — enrichissement quasi pas demarre
-9. **Pipeline.tsx** — progress bar trompeuse (divise par total au lieu de funnel)
-10. **instantly.ts** — zero error handling, zero rate limiting
-11. **Boutons decoratifs** — "Exporter CSV", "Nouveau scraping" sans onClick
-
----
-
-## Verticales (14 secteurs, 3 tiers)
-
-### Tier 1 — ROI Maximum (score > 80)
-| Verticale | Score | Deal moyen | Pain point |
-|-----------|-------|------------|------------|
-| Cabinet Dentaire | 85 | 350 EUR/mois | Appels manques pendant les soins |
-| Agence Immobiliere | 84 | 400 EUR/mois | Agents en visite, prospects perdus |
-| Cabinet Medical | 83 | 300 EUR/mois | Standard sature, secretariat couteux |
-| Cabinet Avocat | 82 | 400 EUR/mois | Avocats en audience, dossiers perdus |
-| Centre Formation | 81 | 300 EUR/mois | Rush inscriptions Parcoursup |
-| Expert-Comptable | 78 | 350 EUR/mois | Periode fiscale critique |
-
-### Tier 2 — High Potential
-Salon Beaute, Veterinaire, Restaurant HG, Artisan Premium, Hotellerie
-
-### Tier 3 — Explore
-Cinema, Auto-ecole, Concessions, Agences voyage
-
----
 
 ## Pipeline Autonome
 
@@ -222,64 +168,6 @@ Cinema, Auto-ecole, Concessions, Agences voyage
 0 6 * * * cd /path/to/GTM_test && ./scripts/run_pipeline.sh >> scripts/pipeline.log 2>&1
 ```
 
----
-
-## Funnel de Conversion
-
-```
-1000 emails envoyes
-  -> 500 ouverts (50%)
-    -> 30 replies (3-5%)
-      -> 15 positifs (50% des replies)
-        -> 8 demos bookees (53%)
-          -> 4 pilotes (50%)
-            -> 2 clients payants (50%)
-
-RATIO MAGIC : 500 emails = 1 client payant a 199 EUR/mois
-```
-
----
-
-## Phases du Projet
-
-### PHASE 1 : FONDATIONS — FAIT
-- [x] Dashboard Next.js 15 + React 19 + Tailwind 4
-- [x] 8,360 leads scrapes via Apify (11 datasets)
-- [x] Import dans Supabase (table gtm_leads)
-- [x] Dashboard connecte Supabase (API /api/stats, refresh 30s)
-- [x] Email scraper async (aiohttp + BS4)
-- [x] Instantly uploader (API v2)
-- [x] Pipeline orchestrateur (run_pipeline.sh)
-- [x] Interface lancement campagne (/launch)
-- [x] Deploy Vercel automatique
-- [x] 14 verticales analysees avec scoring ROI
-
-### PHASE 2 : ENRICHISSEMENT + CAMPAGNES — EN COURS
-- [ ] Fixer les credentials hardcodees (scripts Python)
-- [ ] Migrer data.ts/leads-data.ts vers Supabase-only
-- [ ] Relancer le scraping email (objectif 40%+ des 7,415 sites)
-- [ ] Upload massif dans Instantly par verticale
-- [ ] Activer le pipeline cron quotidien
-- [ ] Creer 3 inboxes warmup (domaines secondaires)
-- [ ] Lancer 3 campagnes pilotes (Formation, Dentaire, Immobilier)
-- [ ] Connecter Notion CRM
-
-### PHASE 3 : SCALE
-- [ ] 20 campagnes actives (1 par verticale)
-- [ ] A/B testing sequences email
-- [ ] LinkedIn outreach top 50 leads
-- [ ] API stats optimisee (SQL aggregation vs in-memory)
-- [ ] N8N automation workflows
-- [ ] Cal.com integration booking
-
-### PHASE 4 : REVENUE
-- [ ] Premier client payant
-- [ ] Case study publie
-- [ ] Pipeline Notion complet
-- [ ] Reporting hebdomadaire automatique
-- [ ] 5-10 clients payants, MRR 1,000-4,000 EUR
-
----
 
 ## Produit AVA AI
 
@@ -294,12 +182,6 @@ Receptionniste vocale IA 24/7 qui repond aux appels, qualifie les leads, et book
 - 75% des gens qui tombent sur messagerie ne rappellent JAMAIS
 - 850-3,000 EUR de revenue perdu par appel manque
 
-### Pricing
-| Plan | Prix | Volume |
-|------|------|--------|
-| Starter | 199 EUR/mois | Jusqu'a 100 appels/mois |
-| Pro | 399 EUR/mois | Jusqu'a 500 appels/mois |
-| Business | 799 EUR/mois | Illimite |
 
 ### Offre pilote
 14 jours gratuits. Setup en 24h. Pas d'engagement.

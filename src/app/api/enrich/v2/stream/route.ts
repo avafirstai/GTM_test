@@ -78,8 +78,8 @@ export async function POST(request: Request) {
   const config: WaterfallConfig = {
     ...DEFAULT_WATERFALL_CONFIG,
     stopOnConfidence: body.stopOnConfidence ?? 80,
-    useKaspr: body.useKaspr ?? false,
-    minScoreForPaid: body.minScoreForPaid ?? 30,
+    useKaspr: body.useKaspr ?? true,
+    minScoreForPaid: body.minScoreForPaid ?? 0, // Default 0 = always try Kaspr (quality > speed)
   };
 
   // Override source enablement if specified
