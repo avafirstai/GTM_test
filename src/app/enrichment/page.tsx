@@ -64,6 +64,18 @@ interface SourceHealth {
   tier: string;
 }
 
+interface EnrichDecisionMaker {
+  name: string;
+  firstName?: string;
+  lastName?: string;
+  title: string | null;
+  email: string | null;
+  phone: string | null;
+  linkedinUrl: string | null;
+  source: string;
+  confidence: number;
+}
+
 interface EnrichResultItem {
   leadId: string;
   name?: string;
@@ -74,6 +86,7 @@ interface EnrichResultItem {
   siret: string | null;
   confidence: number;
   sourcesTried: string[];
+  decisionMakers: EnrichDecisionMaker[];
   error?: string;
 }
 
@@ -143,6 +156,28 @@ function safeSourceStats(raw: unknown): Record<string, SourceStat> | null {
   return Object.keys(result).length > 0 ? result : null;
 }
 
+function parseEnrichDMs(raw: unknown): EnrichDecisionMaker[] {
+  if (!Array.isArray(raw)) return [];
+  const result: EnrichDecisionMaker[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const dm = item as Record<string, unknown>;
+    if (typeof dm.name !== "string") continue;
+    result.push({
+      name: dm.name,
+      firstName: typeof dm.firstName === "string" ? dm.firstName : undefined,
+      lastName: typeof dm.lastName === "string" ? dm.lastName : undefined,
+      title: typeof dm.title === "string" ? dm.title : null,
+      email: typeof dm.email === "string" ? dm.email : null,
+      phone: typeof dm.phone === "string" ? dm.phone : null,
+      linkedinUrl: typeof dm.linkedinUrl === "string" ? dm.linkedinUrl : null,
+      source: typeof dm.source === "string" ? dm.source : "unknown",
+      confidence: typeof dm.confidence === "number" ? dm.confidence : 0,
+    });
+  }
+  return result;
+}
+
 function safeLeadResult(raw: unknown): EnrichResultItem | null {
   if (!raw || typeof raw !== "object") return null;
   const obj = raw as Record<string, unknown>;
@@ -159,6 +194,7 @@ function safeLeadResult(raw: unknown): EnrichResultItem | null {
     siret: typeof obj.siret === "string" ? obj.siret : null,
     confidence: typeof obj.confidence === "number" ? obj.confidence : 0,
     sourcesTried: Array.isArray(obj.sourcesTried) ? (obj.sourcesTried as string[]) : [],
+    decisionMakers: parseEnrichDMs(obj.decisionMakers),
   };
 }
 
@@ -609,6 +645,7 @@ export default function EnrichmentPage() {
                   siret: null,
                   confidence: 0,
                   sourcesTried: [],
+                  decisionMakers: [],
                   error: data.error as string,
                 };
                 setLeadResults((prev) => [...prev, errItem]);

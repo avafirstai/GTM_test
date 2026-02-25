@@ -93,6 +93,24 @@ interface ApiLead {
   enriched_at: string | null;
   email_global: string | null;
   email_dirigeant: string | null;
+  decision_makers: unknown;
+}
+
+/**
+ * Safely parse decision_makers JSONB from Supabase into typed array.
+ */
+function parseDecisionMakers(raw: unknown): DecisionMaker[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((d): d is Record<string, unknown> => d !== null && typeof d === "object")
+    .map((d) => ({
+      name: typeof d.name === "string" ? d.name : "",
+      title: typeof d.title === "string" ? d.title : "",
+      email: typeof d.email === "string" ? d.email : "",
+      linkedin_url: typeof d.linkedinUrl === "string" ? d.linkedinUrl : (typeof d.linkedin_url === "string" ? d.linkedin_url : ""),
+      confidence: typeof d.confidence === "number" ? d.confidence : 0,
+    }))
+    .filter((d) => d.name.length > 0);
 }
 
 interface LeadsApiResponse {
@@ -141,7 +159,7 @@ function mapApiLeadToLead(api: ApiLead): Lead {
     source: api.source || "Google Maps Scraping",
     instantly_status: "not_imported",
     verticale: api.category || "",
-    decision_makers: [],
+    decision_makers: parseDecisionMakers(api.decision_makers),
     enrichment_status: deriveEnrichmentStatus(api),
     enrichment_attempts: api.enrichment_attempts ?? 0,
     enrichment_failed_at: api.enrichment_failed_at ?? null,

@@ -86,11 +86,31 @@ function updateAccumulated(
   context: EnrichmentContext,
   result: EnrichmentResult,
 ): void {
-  // Merge dirigeant
+  // Merge dirigeants (array-based accumulation)
+  if (result.dirigeants && result.dirigeants.length > 0) {
+    for (const dm of result.dirigeants) {
+      const normName = dm.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      const alreadyExists = context.accumulated.decisionMakers.some((existing) => {
+        const existNorm = existing.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        return existNorm === normName;
+      });
+      if (!alreadyExists) {
+        context.accumulated.decisionMakers.push(dm);
+      }
+    }
+  }
+
+  // Backward compat: keep scalar dirigeant from first DM
+  if (!context.accumulated.dirigeant && context.accumulated.decisionMakers.length > 0) {
+    const first = context.accumulated.decisionMakers[0];
+    context.accumulated.dirigeant = first.name;
+    context.accumulated.dirigeantFirstName = first.firstName;
+    context.accumulated.dirigeantLastName = first.lastName;
+  }
+
+  // Legacy path: single dirigeant from sources not yet returning dirigeants[]
   if (result.dirigeant && !context.accumulated.dirigeant) {
     context.accumulated.dirigeant = result.dirigeant;
-
-    // Try to split into first/last name
     const parts = result.dirigeant.trim().split(/\s+/);
     if (parts.length >= 2) {
       context.accumulated.dirigeantFirstName = parts[0];
@@ -174,6 +194,7 @@ export async function runWaterfall(
       hasMx: true, // Assume true until DNS check says otherwise
       emails: [],
       phones: [],
+      decisionMakers: [],
     },
   };
 
@@ -345,6 +366,7 @@ export async function runWaterfall(
     finalConfidence,
     sourcesTried,
     durationMs: Date.now() - startTime,
+    decisionMakers: context.accumulated.decisionMakers,
   };
 }
 

@@ -21,9 +21,17 @@ import type {
   EnrichmentResult,
   EnrichmentLeadInput,
   EnrichmentContext,
+  DecisionMakerData,
 } from "../types";
 import { registerSource } from "../waterfall";
 import { findLinkedInUrl } from "./linkedin-finder";
+
+/* ------------------------------------------------------------------ */
+/*  Constants                                                          */
+/* ------------------------------------------------------------------ */
+
+/** Max DMs to search LinkedIn for (saves API quota) */
+const MAX_LINKEDIN_SEARCH_DMS = 2;
 
 /* ------------------------------------------------------------------ */
 /*  Source Function                                                     */
@@ -43,7 +51,52 @@ async function linkedinSearchSource(
     metadata: {},
   };
 
-  // Skip if we already have a LinkedIn URL (from google_dork or other source)
+  const companyName = lead.name
+    .replace(/\b(sarl|sas|sa|eurl|sasu|sci|snc)\b/gi, "")
+    .trim();
+
+  // Multi-DM mode: find LinkedIn for DMs that don't have one yet
+  const dmsWithoutLinkedIn = context.accumulated.decisionMakers
+    .filter((dm) => !dm.linkedinUrl && dm.firstName && dm.lastName)
+    .slice(0, MAX_LINKEDIN_SEARCH_DMS);
+
+  if (dmsWithoutLinkedIn.length > 0) {
+    const searchPromises = dmsWithoutLinkedIn.map((dm) =>
+      findLinkedInUrl(dm.firstName, dm.lastName, companyName, context.domain)
+        .then((result) => ({ dm, result })),
+    );
+
+    const results = await Promise.allSettled(searchPromises);
+
+    const updatedDms: DecisionMakerData[] = [];
+    const metadata: Record<string, string> = {
+      dm_searched: String(dmsWithoutLinkedIn.length),
+    };
+    let found = 0;
+
+    for (const settled of results) {
+      if (settled.status !== "fulfilled" || !settled.value.result) continue;
+      const { dm, result } = settled.value;
+      dm.linkedinUrl = result.url;
+      found++;
+      updatedDms.push({ ...dm, source: "linkedin_search" });
+    }
+
+    metadata["linkedin_found"] = String(found);
+
+    // Also set scalar backward compat if first DM got a URL
+    if (found > 0) {
+      metadata["linkedin_url"] = updatedDms[0].linkedinUrl ?? "";
+    }
+
+    return {
+      ...emptyResult,
+      metadata,
+      dirigeants: updatedDms.length > 0 ? updatedDms : undefined,
+    };
+  }
+
+  // Legacy fallback: single dirigeant scalar
   if (context.accumulated.linkedinUrl) {
     return {
       ...emptyResult,
@@ -55,7 +108,6 @@ async function linkedinSearchSource(
     };
   }
 
-  // We need a dirigeant name to search for
   const firstName = context.accumulated.dirigeantFirstName;
   const lastName = context.accumulated.dirigeantLastName;
 
@@ -66,17 +118,7 @@ async function linkedinSearchSource(
     };
   }
 
-  // Use the linkedin-finder helper (Apollo → Google CSE → skip)
-  const companyName = lead.name
-    .replace(/\b(sarl|sas|sa|eurl|sasu|sci|snc)\b/gi, "")
-    .trim();
-
-  const result = await findLinkedInUrl(
-    firstName,
-    lastName,
-    companyName,
-    context.domain,
-  );
+  const result = await findLinkedInUrl(firstName, lastName, companyName, context.domain);
 
   if (!result) {
     return {
@@ -85,7 +127,6 @@ async function linkedinSearchSource(
     };
   }
 
-  // Build metadata — the linkedin_url key is recognized by updateAccumulated
   const metadata: Record<string, string> = {
     linkedin_url: result.url,
     strategy: result.strategy,
@@ -93,12 +134,12 @@ async function linkedinSearchSource(
   };
 
   return {
-    email: null, // This source doesn't find emails directly
+    email: null,
     phone: null,
-    dirigeant: context.accumulated.dirigeant, // Pass through
+    dirigeant: context.accumulated.dirigeant,
     siret: null,
     source: "linkedin_search",
-    confidence: 0, // Will be set by computeConfidence
+    confidence: 0,
     metadata,
   };
 }

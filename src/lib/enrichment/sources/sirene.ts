@@ -18,6 +18,7 @@ import type {
   EnrichmentResult,
   EnrichmentLeadInput,
   EnrichmentContext,
+  DecisionMakerData,
 } from "../types";
 import { registerSource } from "../waterfall";
 
@@ -152,12 +153,16 @@ async function searchSirene(
 /*  Dirigeant Extraction                                               */
 /* ------------------------------------------------------------------ */
 
-function extractBestDirigeant(
+/**
+ * Extract ALL physical-person dirigeants from SIRENE data.
+ * Sorted by title priority (gérant > président > directeur > other).
+ * Returns the full array — not just the "best" one.
+ */
+function extractAllDirigeants(
   dirigeants: SireneDirigeant[] | undefined,
-): { fullName: string; firstName: string; lastName: string } | null {
-  if (!dirigeants || dirigeants.length === 0) return null;
+): DecisionMakerData[] {
+  if (!dirigeants || dirigeants.length === 0) return [];
 
-  // Priority: Gérant > Président > Directeur > others
   const priorityOrder = [
     "gerant", "gerante",
     "president", "presidente",
@@ -165,8 +170,7 @@ function extractBestDirigeant(
     "directeur", "directrice",
   ];
 
-  // Sort by priority
-  const sorted = [...dirigeants]
+  return [...dirigeants]
     .filter((d) => d.nom && d.type_dirigeant === "personne physique")
     .sort((a, b) => {
       const aIdx = priorityOrder.findIndex((q) =>
@@ -176,16 +180,23 @@ function extractBestDirigeant(
         (b.qualite ?? "").toLowerCase().includes(q),
       );
       return (aIdx === -1 ? 999 : aIdx) - (bIdx === -1 ? 999 : bIdx);
-    });
-
-  const best = sorted[0];
-  if (!best?.nom) return null;
-
-  const firstName = (best.prenoms ?? "").split(" ")[0] ?? "";
-  const lastName = best.nom;
-  const fullName = `${firstName} ${lastName}`.trim();
-
-  return { fullName, firstName, lastName };
+    })
+    .map((d) => {
+      const firstName = (d.prenoms ?? "").split(" ")[0] ?? "";
+      const lastName = d.nom ?? "";
+      return {
+        name: `${firstName} ${lastName}`.trim(),
+        firstName,
+        lastName,
+        title: d.qualite ?? null,
+        email: null,
+        phone: null,
+        linkedinUrl: null,
+        source: "sirene",
+        confidence: 90,
+      };
+    })
+    .filter((d) => d.name.length > 0);
 }
 
 /* ------------------------------------------------------------------ */
@@ -228,8 +239,11 @@ async function sireneSource(
 
   if (!company) return emptyResult;
 
-  // Extract dirigeant
-  const dirigeantInfo = extractBestDirigeant(company.dirigeants);
+  // Extract ALL dirigeants (not just the best one)
+  const allDirigeants = extractAllDirigeants(company.dirigeants);
+  const dirigeantInfo = allDirigeants.length > 0
+    ? { fullName: allDirigeants[0].name, firstName: allDirigeants[0].firstName, lastName: allDirigeants[0].lastName }
+    : null;
 
   // Build metadata
   const metadata: Record<string, string> = {
@@ -279,6 +293,7 @@ async function sireneSource(
     source: "sirene",
     confidence: 0, // Will be set by computeConfidence
     metadata,
+    dirigeants: allDirigeants,
   };
 }
 

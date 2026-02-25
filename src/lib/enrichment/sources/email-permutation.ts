@@ -21,6 +21,7 @@ import type {
   EnrichmentResult,
   EnrichmentLeadInput,
   EnrichmentContext,
+  DecisionMakerData,
 } from "../types";
 import { registerSource } from "../waterfall";
 
@@ -146,15 +147,51 @@ async function verifyEmail(email: string): Promise<VerifyResult> {
 /*  Source Function                                                     */
 /* ------------------------------------------------------------------ */
 
+/** Max DMs to run email permutations for (FREE but slow) */
+const MAX_EMAIL_PERM_DMS = 5;
+
+/**
+ * Run email permutation + SMTP verification for a single person.
+ * Returns the best verified email or null.
+ */
+async function findEmailForPerson(
+  firstName: string,
+  lastName: string,
+  domain: string,
+): Promise<{ email: string; smtpVerified: boolean } | null> {
+  const permutations = generatePermutations(firstName, lastName, domain);
+  if (permutations.length === 0) return null;
+
+  const maxVerifications = 12;
+  const toVerify = permutations.slice(0, maxVerifications);
+
+  const results = await Promise.allSettled(
+    toVerify.map((email) => verifyEmail(email)),
+  );
+
+  let bestEmail: string | null = null;
+  let bestSmtpVerified = false;
+
+  for (const result of results) {
+    if (result.status !== "fulfilled") continue;
+    const { email, valid, smtpVerified } = result.value;
+
+    if (smtpVerified) {
+      return { email, smtpVerified: true };
+    }
+    if (valid && !bestEmail) {
+      bestEmail = email;
+    }
+  }
+
+  return bestEmail ? { email: bestEmail, smtpVerified: bestSmtpVerified } : null;
+}
+
 async function emailPermutationSource(
   lead: EnrichmentLeadInput,
   context: EnrichmentContext,
 ): Promise<EnrichmentResult> {
   const domain = context.domain;
-
-  // We need a dirigeant name (from SIRENE or previous sources)
-  const firstName = context.accumulated.dirigeantFirstName;
-  const lastName = context.accumulated.dirigeantLastName;
 
   const emptyResult: EnrichmentResult = {
     email: null,
@@ -166,9 +203,59 @@ async function emailPermutationSource(
     metadata: {},
   };
 
+  // Multi-DM mode: find emails for DMs that don't have one yet
+  const dmsWithoutEmail = context.accumulated.decisionMakers
+    .filter((dm) => !dm.email && dm.firstName && dm.lastName)
+    .slice(0, MAX_EMAIL_PERM_DMS);
+
+  if (dmsWithoutEmail.length > 0) {
+    const updatedDms: DecisionMakerData[] = [];
+    let bestEmail: string | null = null;
+    let bestSmtpVerified = false;
+    let successCount = 0;
+
+    // Sequential (not parallel) to avoid hammering eva.pingutil
+    for (const dm of dmsWithoutEmail) {
+      const result = await findEmailForPerson(dm.firstName, dm.lastName, domain);
+      if (result) {
+        dm.email = result.email;
+        successCount++;
+        if (!bestEmail) {
+          bestEmail = result.email;
+          bestSmtpVerified = result.smtpVerified;
+        }
+        updatedDms.push({ ...dm, source: "email_permutation", confidence: result.smtpVerified ? 70 : 50 });
+      }
+    }
+
+    const metadata: Record<string, string> = {
+      strategy: "multi_dm_permutation",
+      dm_attempted: String(dmsWithoutEmail.length),
+      dm_success: String(successCount),
+    };
+
+    if (bestSmtpVerified) {
+      metadata["smtp_verified"] = "true";
+    }
+
+    return {
+      email: bestEmail,
+      phone: null,
+      dirigeant: context.accumulated.dirigeant,
+      siret: null,
+      source: "email_permutation",
+      confidence: 0,
+      metadata,
+      dirigeants: updatedDms.length > 0 ? updatedDms : undefined,
+    };
+  }
+
+  // Legacy fallback: single dirigeant scalar
+  const firstName = context.accumulated.dirigeantFirstName;
+  const lastName = context.accumulated.dirigeantLastName;
+
   if (!firstName || !lastName) {
-    // No dirigeant name → can't generate permutations
-    // Fall back to generic patterns only
+    // No dirigeant name → generic fallback
     const genericEmail = `contact@${domain}`;
     const verification = await verifyEmail(genericEmail);
 
@@ -186,59 +273,26 @@ async function emailPermutationSource(
     return emptyResult;
   }
 
-  // Generate permutations
-  const permutations = generatePermutations(firstName, lastName, domain);
+  // Single DM permutation
+  const result = await findEmailForPerson(firstName, lastName, domain);
 
-  if (permutations.length === 0) return emptyResult;
-
-  // Verify ALL permutations — FR patterns (prenom@, nom@) can be late in list
-  const maxVerifications = 12;
-  const toVerify = permutations.slice(0, maxVerifications);
-
-  // Run verifications in parallel (they're fast)
-  const results = await Promise.allSettled(
-    toVerify.map((email) => verifyEmail(email)),
-  );
-
-  // Find the best verified email
-  let bestEmail: string | null = null;
-  let bestSmtpVerified = false;
-
-  for (const result of results) {
-    if (result.status !== "fulfilled") continue;
-    const { email, valid, smtpVerified } = result.value;
-
-    if (smtpVerified) {
-      bestEmail = email;
-      bestSmtpVerified = true;
-      break; // SMTP verified = best possible result
-    }
-
-    if (valid && !bestEmail) {
-      bestEmail = email;
-    }
-  }
-
-  // Build metadata
   const metadata: Record<string, string> = {
     strategy: "name_permutation",
-    permutations_generated: String(permutations.length),
-    permutations_verified: String(toVerify.length),
     dirigeant_first_name: firstName,
     dirigeant_last_name: lastName,
   };
 
-  if (bestSmtpVerified) {
+  if (result?.smtpVerified) {
     metadata["smtp_verified"] = "true";
   }
 
   return {
-    email: bestEmail,
+    email: result?.email ?? null,
     phone: null,
     dirigeant: context.accumulated.dirigeant,
     siret: null,
     source: "email_permutation",
-    confidence: 0, // Will be set by computeConfidence
+    confidence: 0,
     metadata,
   };
 }

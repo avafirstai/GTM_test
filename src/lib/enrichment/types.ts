@@ -45,6 +45,27 @@ export interface EnrichmentResult {
   skipEmailSources?: boolean;
   /** Duration of this source in ms */
   durationMs?: number;
+  /** Multiple decision-makers found by this source */
+  dirigeants?: DecisionMakerData[];
+}
+
+/* ------------------------------------------------------------------ */
+/*  Decision Maker (per-person data)                                   */
+/* ------------------------------------------------------------------ */
+
+/** A single decision-maker discovered during enrichment */
+export interface DecisionMakerData {
+  name: string;
+  firstName: string;
+  lastName: string;
+  title: string | null;
+  email: string | null;
+  phone: string | null;
+  linkedinUrl: string | null;
+  /** Which enrichment source found this person */
+  source: string;
+  /** Confidence score 0-100 */
+  confidence: number;
 }
 
 /* ------------------------------------------------------------------ */
@@ -100,6 +121,8 @@ export interface EnrichmentPipelineResult {
   sourcesTried: string[];
   /** Total pipeline duration in ms */
   durationMs: number;
+  /** All decision-makers found across sources with their emails/phones/LinkedIn */
+  decisionMakers: DecisionMakerData[];
 }
 
 /* ------------------------------------------------------------------ */
@@ -145,6 +168,8 @@ export interface EnrichmentContext {
     hasMx: boolean;
     emails: string[];
     phones: string[];
+    /** All decision-makers accumulated from all sources */
+    decisionMakers: DecisionMakerData[];
   };
 }
 

@@ -15,6 +15,7 @@ import type {
   EnrichmentResult,
   EnrichmentLeadInput,
   EnrichmentContext,
+  DecisionMakerData,
 } from "../types";
 import { registerSource } from "../waterfall";
 
@@ -120,6 +121,9 @@ function extractLinkedInUrls(text: string): string[] {
 /*  Source Function                                                     */
 /* ------------------------------------------------------------------ */
 
+/** Max DMs to search LinkedIn for via Google CSE (saves quota: 100/day) */
+const MAX_GOOGLE_DORK_DM_QUERIES = 2;
+
 async function googleDorkSource(
   lead: EnrichmentLeadInput,
   context: EnrichmentContext,
@@ -146,43 +150,85 @@ async function googleDorkSource(
     };
   }
 
-  // Build search queries — OPTIMIZED: 1 query when dirigeant known (saves CSE quota)
-  // With dirigeant: LinkedIn URL is the priority (email comes from email_permutation)
-  // Without dirigeant: email search is the fallback
-  let queries: string[];
-  if (context.accumulated.dirigeant) {
-    const companyName = lead.name.replace(/\b(sarl|sas|sa|eurl|sasu)\b/gi, "").trim();
-    queries = [
-      `site:linkedin.com/in "${context.accumulated.dirigeant}" "${companyName}"`,
-    ];
-  } else {
-    queries = [`"@${domain}" email`];
-  }
+  const companyName = lead.name.replace(/\b(sarl|sas|sa|eurl|sasu)\b/gi, "").trim();
+  const dms = context.accumulated.decisionMakers;
 
-  // Run the single query (saves 50% CSE quota when dirigeant known)
-  const searchResult = await googleSearch(queries[0], apiKey, cx);
+  // Multi-DM mode: search LinkedIn for top N DMs without a LinkedIn URL
+  const dmsToSearch = dms
+    .filter((dm) => !dm.linkedinUrl && dm.name.length > 0)
+    .slice(0, MAX_GOOGLE_DORK_DM_QUERIES);
 
-  // Extract emails AND LinkedIn URLs from results
+  // Collect all results across queries
   const allEmails: string[] = [];
   const allLinkedInUrls: string[] = [];
   let pagesFound = 0;
+  const linkedInMatches: Array<{ dmName: string; url: string }> = [];
 
-  if (searchResult?.items) {
-    for (const item of searchResult.items) {
-      pagesFound++;
-      const text = `${item.title} ${item.snippet} ${item.link}`;
+  if (dmsToSearch.length > 0) {
+    // Multi-DM: search LinkedIn for each DM (cap at MAX_GOOGLE_DORK_DM_QUERIES)
+    const searchPromises = dmsToSearch.map((dm) =>
+      googleSearch(
+        `site:linkedin.com/in "${dm.name}" "${companyName}"`,
+        apiKey,
+        cx,
+      ).then((result) => ({ dm, result })),
+    );
 
-      // Extract emails (even from LinkedIn query — snippets may contain them)
-      const emails = extractEmailsFromText(text, domain);
-      allEmails.push(...emails);
+    const searchResults = await Promise.allSettled(searchPromises);
 
-      // Extract LinkedIn URLs
-      const linkedInUrls = extractLinkedInUrls(text);
-      allLinkedInUrls.push(...linkedInUrls);
+    for (const settled of searchResults) {
+      if (settled.status !== "fulfilled" || !settled.value.result?.items) continue;
+      const { dm, result: searchResult } = settled.value;
+      const items = searchResult.items ?? [];
+
+      for (const item of items) {
+        pagesFound++;
+        const text = `${item.title} ${item.snippet} ${item.link}`;
+
+        const emails = extractEmailsFromText(text, domain);
+        allEmails.push(...emails);
+
+        const linkedInUrls = extractLinkedInUrls(text);
+        allLinkedInUrls.push(...linkedInUrls);
+
+        // Assign first LinkedIn URL found to this DM
+        if (linkedInUrls.length > 0 && !dm.linkedinUrl) {
+          dm.linkedinUrl = linkedInUrls[0];
+          linkedInMatches.push({ dmName: dm.name, url: linkedInUrls[0] });
+        }
+      }
+    }
+  } else if (context.accumulated.dirigeant) {
+    // Legacy: single dirigeant scalar (backward compat for sources not yet returning DMs)
+    const searchResult = await googleSearch(
+      `site:linkedin.com/in "${context.accumulated.dirigeant}" "${companyName}"`,
+      apiKey,
+      cx,
+    );
+
+    if (searchResult?.items) {
+      for (const item of searchResult.items) {
+        pagesFound++;
+        const text = `${item.title} ${item.snippet} ${item.link}`;
+        allEmails.push(...extractEmailsFromText(text, domain));
+        allLinkedInUrls.push(...extractLinkedInUrls(text));
+      }
+    }
+  } else {
+    // No DMs, no dirigeant: fallback to email search
+    const searchResult = await googleSearch(`"@${domain}" email`, apiKey, cx);
+
+    if (searchResult?.items) {
+      for (const item of searchResult.items) {
+        pagesFound++;
+        const text = `${item.title} ${item.snippet} ${item.link}`;
+        allEmails.push(...extractEmailsFromText(text, domain));
+        allLinkedInUrls.push(...extractLinkedInUrls(text));
+      }
     }
   }
 
-  // If both queries returned nothing, early return
+  // If nothing found, early return
   if (pagesFound === 0) return emptyResult;
 
   // Deduplicate
@@ -190,17 +236,14 @@ async function googleDorkSource(
   const uniqueLinkedIn = [...new Set(allLinkedInUrls)];
 
   // Prefer same-domain emails
-  const sameDomainEmails = uniqueEmails.filter((e) =>
-    e.includes(domain),
-  );
-  const bestEmail =
-    sameDomainEmails[0] ?? uniqueEmails[0] ?? null;
+  const sameDomainEmails = uniqueEmails.filter((e) => e.includes(domain));
+  const bestEmail = sameDomainEmails[0] ?? uniqueEmails[0] ?? null;
 
   // Build metadata
   const metadata: Record<string, string> = {
     pages_found: String(pagesFound),
-    total_results: searchResult?.searchInformation?.totalResults ?? "0",
     emails_found: String(uniqueEmails.length),
+    dm_queries: String(dmsToSearch.length),
   };
 
   if (uniqueLinkedIn.length > 0) {
@@ -210,6 +253,16 @@ async function googleDorkSource(
     }
   }
 
+  if (linkedInMatches.length > 0) {
+    metadata["linkedin_matches"] = JSON.stringify(linkedInMatches);
+  }
+
+  // Build updated dirigeants array with LinkedIn URLs assigned
+  const updatedDirigeants: DecisionMakerData[] = dmsToSearch.map((dm) => ({
+    ...dm,
+    source: dm.linkedinUrl ? "google_dork" : dm.source,
+  }));
+
   return {
     email: bestEmail,
     phone: null,
@@ -218,6 +271,7 @@ async function googleDorkSource(
     source: "google_dork",
     confidence: 0, // Will be set by computeConfidence
     metadata,
+    dirigeants: updatedDirigeants.length > 0 ? updatedDirigeants : undefined,
   };
 }
 

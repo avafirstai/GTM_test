@@ -23,6 +23,7 @@ import type {
   EnrichmentResult,
   EnrichmentLeadInput,
   EnrichmentContext,
+  DecisionMakerData,
 } from "../types";
 import { registerSource } from "../waterfall";
 
@@ -138,6 +139,9 @@ function selectBestKasprEmail(
 /*  Source Function                                                     */
 /* ------------------------------------------------------------------ */
 
+/** Max DMs to call Kaspr for (paid credits — explicit cap) */
+const MAX_KASPR_DM_CALLS = 3;
+
 async function kasprSource(
   lead: EnrichmentLeadInput,
   context: EnrichmentContext,
@@ -162,7 +166,64 @@ async function kasprSource(
     };
   }
 
-  // Guard: Need a LinkedIn URL
+  // Multi-DM mode: call Kaspr for each DM with a LinkedIn URL but no email
+  const dmsWithLinkedIn = context.accumulated.decisionMakers
+    .filter((dm) => dm.linkedinUrl && !dm.email)
+    .slice(0, MAX_KASPR_DM_CALLS);
+
+  if (dmsWithLinkedIn.length > 0) {
+    // Parallel Kaspr calls for all eligible DMs
+    const kasprPromises = dmsWithLinkedIn.map((dm) =>
+      callKasprApi(dm.linkedinUrl!, dm.name, apiKey)
+        .then((response) => ({ dm, response })),
+    );
+
+    const results = await Promise.allSettled(kasprPromises);
+
+    const updatedDms: DecisionMakerData[] = [];
+    let bestEmail: string | null = null;
+    let bestPhone: string | null = null;
+    const metadata: Record<string, string> = {
+      dm_calls: String(dmsWithLinkedIn.length),
+    };
+    let successCount = 0;
+
+    for (const settled of results) {
+      if (settled.status !== "fulfilled" || !settled.value.response?.data) continue;
+      const { dm, response } = settled.value;
+      const data = response.data;
+      if (!data) continue;
+
+      successCount++;
+
+      const dmEmail = selectBestKasprEmail(data.emails ?? []);
+      const dmPhone = data.phones && data.phones.length > 0 ? data.phones[0].phone : null;
+
+      if (dmEmail) dm.email = dmEmail.email;
+      if (dmPhone) dm.phone = dmPhone;
+
+      // Backward compat: first DM email/phone becomes the scalar
+      if (!bestEmail && dmEmail) bestEmail = dmEmail.email;
+      if (!bestPhone && dmPhone) bestPhone = dmPhone;
+
+      updatedDms.push({ ...dm, source: "kaspr", confidence: 88 });
+    }
+
+    metadata["kaspr_success"] = String(successCount);
+
+    return {
+      email: bestEmail,
+      phone: bestPhone,
+      dirigeant: null,
+      siret: null,
+      source: "kaspr",
+      confidence: 0,
+      metadata,
+      dirigeants: updatedDms.length > 0 ? updatedDms : undefined,
+    };
+  }
+
+  // Legacy fallback: single LinkedIn URL from scalar accumulated context
   const linkedinUrl = context.accumulated.linkedinUrl;
   if (!linkedinUrl) {
     return {
@@ -192,7 +253,7 @@ async function kasprSource(
   const { data } = response;
 
   // Extract best email
-  const bestEmail = selectBestKasprEmail(data.emails ?? []);
+  const bestEmailResult = selectBestKasprEmail(data.emails ?? []);
 
   // Extract best phone (prefer work → direct → personal)
   const bestPhone =
@@ -209,7 +270,7 @@ async function kasprSource(
   if (data.title) metadata["title"] = data.title;
   if (data.company) metadata["company"] = data.company;
   if (data.linkedin_url) metadata["linkedin_url"] = data.linkedin_url;
-  if (bestEmail) metadata["email_type"] = bestEmail.type;
+  if (bestEmailResult) metadata["email_type"] = bestEmailResult.type;
 
   if (data.emails && data.emails.length > 0) {
     metadata["emails_found"] = String(data.emails.length);
@@ -225,12 +286,12 @@ async function kasprSource(
   }
 
   return {
-    email: bestEmail?.email ?? null,
+    email: bestEmailResult?.email ?? null,
     phone: bestPhone,
     dirigeant: fullName || null,
-    siret: null, // Kaspr doesn't provide SIRET
+    siret: null,
     source: "kaspr",
-    confidence: 0, // Will be set by computeConfidence
+    confidence: 0,
     metadata,
   };
 }

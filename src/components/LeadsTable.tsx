@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, useRef, useEffect, useCallback } from "react";
-import { ChevronDown, X, Loader2, UserSearch, Linkedin, Mail as MailIcon, Shield, MapPin } from "lucide-react";
+import { ChevronDown, X, Loader2, Linkedin, Mail as MailIcon, Shield, MapPin } from "lucide-react";
 import type { Lead, DecisionMaker, SortField, SortDirection, LeadFilters } from "@/lib/leads-data";
 
 interface LeadsTableProps {
@@ -194,9 +194,6 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
   const [bulkMessage, setBulkMessage] = useState<string>("");
   const [bulkMessageType, setBulkMessageType] = useState<"success" | "error">("success");
   const [sendingLeadId, setSendingLeadId] = useState<string | null>(null);
-  const [decisionMakers, setDecisionMakers] = useState<Record<string, DecisionMaker[]>>({});
-  const [dmLoading, setDmLoading] = useState<Set<string>>(new Set());
-  const [dmErrors, setDmErrors] = useState<Record<string, string>>({});
   const [currentPage, setCurrentPage] = useState(1);
   const PAGE_SIZE = 50;
 
@@ -241,31 +238,6 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
         next.delete(lead.id);
         return next;
       });
-    }
-  }, []);
-
-  const handleFindDecisionMakers = useCallback(async (lead: Lead) => {
-    if (!lead.site_web) return;
-    setDmLoading((prev) => new Set([...prev, lead.id]));
-    setDmErrors((prev) => { const n = { ...prev }; delete n[lead.id]; return n; });
-    try {
-      const res = await fetch("/api/enrich/people", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ domain: lead.site_web, leadId: lead.id, limit: 5 }),
-      });
-      const data = await res.json();
-      if (data.success && data.people && data.people.length > 0) {
-        setDecisionMakers((prev) => ({ ...prev, [lead.id]: data.people }));
-      } else if (data.success && (!data.people || data.people.length === 0)) {
-        setDmErrors((prev) => ({ ...prev, [lead.id]: "Aucun decideur trouve pour ce domaine" }));
-      } else {
-        setDmErrors((prev) => ({ ...prev, [lead.id]: data.error || "Erreur Apollo" }));
-      }
-    } catch {
-      setDmErrors((prev) => ({ ...prev, [lead.id]: "Erreur reseau" }));
-    } finally {
-      setDmLoading((prev) => { const n = new Set(prev); n.delete(lead.id); return n; });
     }
   }, []);
 
@@ -1124,10 +1096,10 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
                             Decideurs
                           </h4>
 
-                          {/* Decision makers list */}
-                          {decisionMakers[lead.id] && decisionMakers[lead.id].length > 0 ? (
+                          {/* Decision makers from enrichment DB */}
+                          {lead.decision_makers.length > 0 ? (
                             <div className="space-y-1.5 mb-3">
-                              {decisionMakers[lead.id].map((dm, idx) => (
+                              {lead.decision_makers.map((dm, idx) => (
                                 <div
                                   key={`${lead.id}-dm-${idx}`}
                                   className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs"
@@ -1198,31 +1170,7 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
                                 </div>
                               ))}
                             </div>
-                          ) : dmErrors[lead.id] ? (
-                            <div
-                              className="px-3 py-2 rounded-lg text-[11px] mb-3"
-                              style={{ background: "rgba(245,158,11,0.08)", color: "var(--amber)" }}
-                            >
-                              {dmErrors[lead.id]}
-                            </div>
                           ) : null}
-
-                          {/* Find decision-makers button */}
-                          {!decisionMakers[lead.id] && lead.site_web && (
-                            <button
-                              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md font-medium transition-opacity disabled:opacity-50 mb-3"
-                              style={{ background: "var(--accent-subtle)", color: "var(--accent-hover)" }}
-                              onClick={(e) => { e.stopPropagation(); handleFindDecisionMakers(lead); }}
-                              disabled={dmLoading.has(lead.id)}
-                            >
-                              {dmLoading.has(lead.id) ? (
-                                <Loader2 size={12} className="animate-spin" />
-                              ) : (
-                                <UserSearch size={12} />
-                              )}
-                              {dmLoading.has(lead.id) ? "Recherche Apollo..." : "Trouver les decideurs"}
-                            </button>
-                          )}
 
                           {/* Enrichment mini-status */}
                           <div

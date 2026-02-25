@@ -454,6 +454,9 @@ export async function POST(request: Request) {
               if (result.emailDirigeant) updateData.email_dirigeant = result.emailDirigeant;
               if (result.mxProvider) updateData.mx_provider = result.mxProvider;
               updateData.has_mx = result.hasMx;
+              if (result.decisionMakers && result.decisionMakers.length > 0) {
+                updateData.decision_makers = result.decisionMakers;
+              }
 
               const { error: dbErrEnrich } = await supabase
                 .from("gtm_leads")
@@ -504,6 +507,7 @@ export async function POST(request: Request) {
               siret: result.siret ?? null,
               confidence: result.finalConfidence,
               sourcesTried: result.sourcesTried,
+              decisionMakers: result.decisionMakers ?? [],
             });
 
             // Emit progress after each lead
