@@ -133,6 +133,25 @@ function extractSiret(html: string): string | null {
 }
 
 /* ------------------------------------------------------------------ */
+/*  HTML Entity Decoding                                               */
+/* ------------------------------------------------------------------ */
+
+/** Decode common HTML entities that corrupt extracted emails/phones */
+function decodeHtmlEntities(html: string): string {
+  return html
+    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/\\u003e/gi, ">")
+    .replace(/\\u003c/gi, "<")
+    .replace(/\\u0026/gi, "&");
+}
+
+/* ------------------------------------------------------------------ */
 /*  Email Extraction                                                   */
 /* ------------------------------------------------------------------ */
 
@@ -144,8 +163,17 @@ function deobfuscateText(text: string): string {
   return result;
 }
 
+function cleanExtractedEmail(raw: string): string {
+  // Strip leading/trailing HTML artifacts: > < &gt; &lt; etc.
+  return raw
+    .replace(/^[<>;\s]+/, "")
+    .replace(/[<>;\s]+$/, "")
+    .toLowerCase()
+    .trim();
+}
+
 function isValidContactEmail(email: string): boolean {
-  const lower = email.toLowerCase();
+  const lower = cleanExtractedEmail(email);
   const domain = lower.split("@")[1];
   if (!domain) return false;
   if (EXCLUDED_DOMAINS.has(domain)) return false;
@@ -162,22 +190,25 @@ function isValidContactEmail(email: string): boolean {
 function extractEmails(html: string): string[] {
   const emails = new Set<string>();
 
+  // Decode HTML entities first so &#64; → @, \u003e → >, etc.
+  const decoded = decodeHtmlEntities(html);
+
   // 1. Extract from mailto: links (highest quality)
   let match: RegExpExecArray | null;
   const mailtoRegex = new RegExp(MAILTO_REGEX.source, "gi");
-  while ((match = mailtoRegex.exec(html)) !== null) {
-    const email = match[1].toLowerCase().trim();
+  while ((match = mailtoRegex.exec(decoded)) !== null) {
+    const email = cleanExtractedEmail(match[1]);
     if (isValidContactEmail(email)) {
       emails.add(email);
     }
   }
 
   // 2. Deobfuscate the HTML text, then regex
-  const deobfuscated = deobfuscateText(html);
+  const deobfuscated = deobfuscateText(decoded);
 
   const emailRegex = new RegExp(EMAIL_REGEX.source, "g");
   while ((match = emailRegex.exec(deobfuscated)) !== null) {
-    const email = match[0].toLowerCase().trim();
+    const email = cleanExtractedEmail(match[0]);
     if (isValidContactEmail(email)) {
       emails.add(email);
     }
@@ -185,8 +216,8 @@ function extractEmails(html: string): string[] {
 
   // 3. Extract from meta tags (often hidden from visible HTML)
   const metaEmailRegex = /<meta[^>]*content\s*=\s*["']([^"']*@[^"']*\.[a-zA-Z]{2,})["'][^>]*>/gi;
-  while ((match = metaEmailRegex.exec(html)) !== null) {
-    const email = match[1].toLowerCase().trim();
+  while ((match = metaEmailRegex.exec(decoded)) !== null) {
+    const email = cleanExtractedEmail(match[1]);
     if (isValidContactEmail(email)) {
       emails.add(email);
     }
@@ -194,8 +225,8 @@ function extractEmails(html: string): string[] {
 
   // 4. Extract from <link rel="author" href="mailto:...">
   const linkAuthorRegex = /<link[^>]*href\s*=\s*["']mailto:([^"']+)["'][^>]*>/gi;
-  while ((match = linkAuthorRegex.exec(html)) !== null) {
-    const email = match[1].toLowerCase().trim();
+  while ((match = linkAuthorRegex.exec(decoded)) !== null) {
+    const email = cleanExtractedEmail(match[1]);
     if (isValidContactEmail(email)) {
       emails.add(email);
     }

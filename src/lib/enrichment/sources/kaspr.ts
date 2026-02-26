@@ -11,7 +11,7 @@
  *   - config.useKaspr = true
  *
  * API: POST https://api.developers.kaspr.io/profile/linkedin
- * Auth: Raw API key in Authorization header (NOT Bearer)
+ * Auth: Bearer API key in Authorization header
  * Input: { name: string, id: string } (id = LinkedIn URL)
  * Returns: work email, direct email, phone, title, company
  *
@@ -27,7 +27,7 @@ import type {
 import { registerSource } from "../waterfall";
 
 /* ------------------------------------------------------------------ */
-/*  Kaspr API Types                                                    */
+/*  Kaspr API Types (matches real API response format)                 */
 /* ------------------------------------------------------------------ */
 
 interface KasprRequest {
@@ -35,29 +35,43 @@ interface KasprRequest {
   id: string; // LinkedIn URL
 }
 
-interface KasprEmailResult {
+interface KasprEmailEntry {
   email: string;
-  type: string; // "work" | "direct" | "personal"
-  verified: boolean;
+  valid: boolean | null;
+  isCurrent?: boolean;
 }
 
-interface KasprPhoneResult {
+interface KasprPhoneEntry {
   phone: string;
-  type: string; // "work" | "direct" | "personal"
+  type?: string;
+}
+
+interface KasprProfile {
+  id?: string;
+  firstName?: string;
+  lastName?: string;
+  name?: string;
+  companyName?: string;
+  title?: string;
+  /** Best professional email (scalar shortcut) */
+  professionalEmail?: string | null;
+  professionalEmails?: string[];
+  personalEmail?: string | null;
+  personalEmails?: string[];
+  /** All emails with validity info */
+  emails?: KasprEmailEntry[];
+  /** Best phone (scalar shortcut) */
+  phone?: string | null;
+  starryPhone?: string | null;
+  phones?: KasprPhoneEntry[];
+  location?: string;
+  fetchedAt?: string;
 }
 
 interface KasprResponse {
-  status: string;
-  data?: {
-    first_name?: string;
-    last_name?: string;
-    full_name?: string;
-    title?: string;
-    company?: string;
-    emails?: KasprEmailResult[];
-    phones?: KasprPhoneResult[];
-    linkedin_url?: string;
-  };
+  profile?: KasprProfile;
+  /** Legacy format (some endpoints may use 'data' instead of 'profile') */
+  data?: KasprProfile;
   error?: string;
   message?: string;
 }
@@ -86,7 +100,7 @@ async function callKasprApi(
         method: "POST",
         signal: controller.signal,
         headers: {
-          Authorization: apiKey, // Raw key, NOT Bearer
+          Authorization: `Bearer ${apiKey}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify(body),
@@ -139,24 +153,40 @@ function buildLinkedInGuess(firstName: string, lastName: string): string | null 
 /*  Email Selection                                                    */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Extract best email from Kaspr profile.
+ * Priority: professionalEmail > personalEmail > emails[] list
+ */
 function selectBestKasprEmail(
-  emails: KasprEmailResult[],
+  profile: KasprProfile,
 ): { email: string; type: string } | null {
-  if (!emails || emails.length === 0) return null;
+  // 1. Professional email (highest priority — work email)
+  if (profile.professionalEmail) {
+    return { email: profile.professionalEmail, type: "work" };
+  }
+  // Fallback: check professionalEmails array
+  if (profile.professionalEmails && profile.professionalEmails.length > 0) {
+    return { email: profile.professionalEmails[0], type: "work" };
+  }
 
-  // Priority: work verified → work unverified → direct verified → direct → personal
-  const priority = ["work", "direct", "personal"];
+  // 2. Personal email
+  if (profile.personalEmail) {
+    return { email: profile.personalEmail, type: "personal" };
+  }
+  if (profile.personalEmails && profile.personalEmails.length > 0) {
+    return { email: profile.personalEmails[0], type: "personal" };
+  }
 
-  const sorted = [...emails].sort((a, b) => {
-    // Verified first
-    if (a.verified !== b.verified) return a.verified ? -1 : 1;
-    // Then by type priority
-    const aIdx = priority.indexOf(a.type);
-    const bIdx = priority.indexOf(b.type);
-    return (aIdx === -1 ? 999 : aIdx) - (bIdx === -1 ? 999 : bIdx);
-  });
+  // 3. Generic emails list (last resort)
+  if (profile.emails && profile.emails.length > 0) {
+    // Prefer current emails
+    const current = profile.emails.find((e) => e.isCurrent && e.email);
+    if (current) return { email: current.email, type: "unknown" };
+    const first = profile.emails.find((e) => e.email);
+    if (first) return { email: first.email, type: "unknown" };
+  }
 
-  return { email: sorted[0].email, type: sorted[0].type };
+  return null;
 }
 
 /* ------------------------------------------------------------------ */
@@ -224,15 +254,16 @@ async function kasprSource(
     let successCount = 0;
 
     for (const settled of results) {
-      if (settled.status !== "fulfilled" || !settled.value.response?.data) continue;
+      if (settled.status !== "fulfilled") continue;
       const { dm, response } = settled.value;
-      const data = response.data;
-      if (!data) continue;
+      // Kaspr returns { profile: {...} } — fallback to { data: {...} } for compat
+      const profile = response?.profile ?? response?.data;
+      if (!profile) continue;
 
       successCount++;
 
-      const dmEmail = selectBestKasprEmail(data.emails ?? []);
-      const dmPhone = data.phones && data.phones.length > 0 ? data.phones[0].phone : null;
+      const dmEmail = selectBestKasprEmail(profile);
+      const dmPhone = profile.phone ?? (profile.phones && profile.phones.length > 0 ? profile.phones[0].phone : null);
 
       if (dmEmail) dm.email = dmEmail.email;
       if (dmPhone) dm.phone = dmPhone;
@@ -284,7 +315,9 @@ async function kasprSource(
   // Call Kaspr API
   const response = await callKasprApi(linkedinUrl, name, apiKey);
 
-  if (!response || !response.data) {
+  // Kaspr returns { profile: {...} } — fallback to { data: {...} } for compat
+  const profile = response?.profile ?? response?.data;
+  if (!profile) {
     return {
       ...emptyResult,
       metadata: {
@@ -293,38 +326,35 @@ async function kasprSource(
     };
   }
 
-  const { data } = response;
-
   // Extract best email
-  const bestEmailResult = selectBestKasprEmail(data.emails ?? []);
+  const bestEmailResult = selectBestKasprEmail(profile);
 
-  // Extract best phone (prefer work → direct → personal)
-  const bestPhone =
-    data.phones && data.phones.length > 0 ? data.phones[0].phone : null;
+  // Extract best phone
+  const bestPhone = profile.phone ??
+    (profile.phones && profile.phones.length > 0 ? profile.phones[0].phone : null);
 
   // Build full name
-  const fullName = data.full_name ??
-    `${data.first_name ?? ""} ${data.last_name ?? ""}`.trim() ??
+  const fullName = profile.name ??
+    `${profile.firstName ?? ""} ${profile.lastName ?? ""}`.trim() ??
     null;
 
   // Build metadata
   const metadata: Record<string, string> = {};
 
-  if (data.title) metadata["title"] = data.title;
-  if (data.company) metadata["company"] = data.company;
-  if (data.linkedin_url) metadata["linkedin_url"] = data.linkedin_url;
+  if (profile.title) metadata["title"] = profile.title;
+  if (profile.companyName) metadata["company"] = profile.companyName;
+  if (profile.id) metadata["linkedin_url"] = profile.id;
   if (bestEmailResult) metadata["email_type"] = bestEmailResult.type;
 
-  if (data.emails && data.emails.length > 0) {
-    metadata["emails_found"] = String(data.emails.length);
+  if (profile.emails && profile.emails.length > 0) {
+    metadata["emails_found"] = String(profile.emails.length);
   }
-  if (data.phones && data.phones.length > 0) {
-    metadata["phones_found"] = String(data.phones.length);
+  if (profile.phones && profile.phones.length > 0) {
+    metadata["phones_found"] = String(profile.phones.length);
   }
 
-  // Mark if we got verified data
-  const hasVerifiedEmail = data.emails?.some((e) => e.verified) ?? false;
-  if (hasVerifiedEmail) {
+  // Mark if we got a professional email (verified by Kaspr)
+  if (profile.professionalEmail) {
     metadata["smtp_verified"] = "true";
   }
 
