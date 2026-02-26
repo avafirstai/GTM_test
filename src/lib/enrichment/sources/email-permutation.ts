@@ -1,20 +1,24 @@
 /**
- * Waterfall Source 5 — Email Permutation + Verification
+ * Waterfall Source 8 — Email Permutation + STRICT Double SMTP Verification
  *
- * Priority: 5
- * Cost: FREE to FREEMIUM (depends on verification API)
+ * Priority: 8 (LAST RESORT — only after all other sources including Kaspr)
+ * Cost: FREE
  * Purpose: Generate email candidates from dirigeant name + domain,
- *   then verify which ones actually exist via email verification API.
+ *   then verify which ones actually exist via double SMTP check.
+ *
+ * STRICT POLICY: Only returns emails verified by BOTH eva.pingutil.com
+ * AND mailcheck.ai. If either service fails → email is REJECTED.
+ * No guesses, no "syntax-only valid" emails. 100% verified or nothing.
  *
  * Requires: Dirigeant name from SIRENE (Phase 4) + domain from lead
  *
  * Flow:
  *   1. Get dirigeant name from accumulated context (SIRENE gave us this)
- *   2. Generate 8+ email permutations (prenom.nom@, p.nom@, etc.)
- *   3. Verify each via /api/enrich/verify-email (SMTP check or API)
- *   4. Return the first verified email
+ *   2. Generate 12 email permutations (prenom.nom@, p.nom@, etc.)
+ *   3. Double-verify each via eva.pingutil.com + mailcheck.ai
+ *   4. Return ONLY the first double-SMTP-verified email (strict mode)
  *
- * Confidence: 50 base (generated pattern), +20 if SMTP verified = 70
+ * Confidence: 90 base (double SMTP-verified = very reliable)
  */
 
 import type {
@@ -24,6 +28,7 @@ import type {
   DecisionMakerData,
 } from "../types";
 import { registerSource } from "../waterfall";
+import { verifyEmailSmtp } from "../smtp-verify";
 
 /* ------------------------------------------------------------------ */
 /*  Accent Normalization                                               */
@@ -93,57 +98,6 @@ function generatePermutations(
 }
 
 /* ------------------------------------------------------------------ */
-/*  Email Verification                                                 */
-/* ------------------------------------------------------------------ */
-
-interface VerifyResult {
-  email: string;
-  valid: boolean;
-  smtpVerified: boolean;
-}
-
-/**
- * Verify an email address using the /api/enrich/verify-email endpoint.
- * Falls back to a free API if the local endpoint is not available.
- */
-async function verifyEmail(email: string): Promise<VerifyResult> {
-  // Strategy: Try eva.pingutil.com (free, no auth, unlimited)
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
-
-    const resp = await fetch(
-      `https://api.eva.pingutil.com/email?email=${encodeURIComponent(email)}`,
-      {
-        signal: controller.signal,
-        headers: { Accept: "application/json" },
-      },
-    );
-
-    clearTimeout(timeout);
-
-    if (resp.ok) {
-      const data = await resp.json();
-      return {
-        email,
-        valid: data.status === "valid" || data.data?.valid_syntax === true,
-        smtpVerified: data.data?.smtp_check === true,
-      };
-    }
-  } catch {
-    // API failed — fall back to syntax check only
-  }
-
-  // Fallback: basic syntax validation (no SMTP check)
-  const syntaxValid = /^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$/.test(email);
-  return {
-    email,
-    valid: syntaxValid,
-    smtpVerified: false,
-  };
-}
-
-/* ------------------------------------------------------------------ */
 /*  Source Function                                                     */
 /* ------------------------------------------------------------------ */
 
@@ -151,8 +105,9 @@ async function verifyEmail(email: string): Promise<VerifyResult> {
 const MAX_EMAIL_PERM_DMS = 5;
 
 /**
- * Run email permutation + SMTP verification for a single person.
- * Returns the best verified email or null.
+ * Run email permutation + STRICT double SMTP verification for a single person.
+ * Uses verifyEmailSmtp from smtp-verify.ts (eva + mailcheck double check).
+ * Returns ONLY a double-SMTP-verified email or null. No guesses.
  */
 async function findEmailForPerson(
   firstName: string,
@@ -165,26 +120,23 @@ async function findEmailForPerson(
   const maxVerifications = 12;
   const toVerify = permutations.slice(0, maxVerifications);
 
+  // Verify all permutations in parallel using the shared double-check verifier
   const results = await Promise.allSettled(
-    toVerify.map((email) => verifyEmail(email)),
+    toVerify.map((email) => verifyEmailSmtp(email)),
   );
 
-  let bestEmail: string | null = null;
-  let bestSmtpVerified = false;
-
+  // STRICT: Only return double-SMTP-verified emails. No syntax-only guesses.
   for (const result of results) {
     if (result.status !== "fulfilled") continue;
-    const { email, valid, smtpVerified } = result.value;
+    const { email, smtpVerified, disposable } = result.value;
 
-    if (smtpVerified) {
+    if (smtpVerified && !disposable) {
       return { email, smtpVerified: true };
-    }
-    if (valid && !bestEmail) {
-      bestEmail = email;
     }
   }
 
-  return bestEmail ? { email: bestEmail, smtpVerified: bestSmtpVerified } : null;
+  // No double-verified email found → return null (strict policy)
+  return null;
 }
 
 async function emailPermutationSource(
@@ -211,10 +163,9 @@ async function emailPermutationSource(
   if (dmsWithoutEmail.length > 0) {
     const updatedDms: DecisionMakerData[] = [];
     let bestEmail: string | null = null;
-    let bestSmtpVerified = false;
     let successCount = 0;
 
-    // Sequential (not parallel) to avoid hammering eva.pingutil
+    // Sequential to avoid hammering verification APIs
     for (const dm of dmsWithoutEmail) {
       const result = await findEmailForPerson(dm.firstName, dm.lastName, domain);
       if (result) {
@@ -222,19 +173,19 @@ async function emailPermutationSource(
         successCount++;
         if (!bestEmail) {
           bestEmail = result.email;
-          bestSmtpVerified = result.smtpVerified;
         }
-        updatedDms.push({ ...dm, source: "email_permutation", confidence: result.smtpVerified ? 70 : 50 });
+        // All results are double-SMTP-verified (strict mode) → confidence 90
+        updatedDms.push({ ...dm, source: "email_permutation", confidence: 90 });
       }
     }
 
     const metadata: Record<string, string> = {
-      strategy: "multi_dm_permutation",
+      strategy: "multi_dm_permutation_strict",
       dm_attempted: String(dmsWithoutEmail.length),
       dm_success: String(successCount),
     };
 
-    if (bestSmtpVerified) {
+    if (bestEmail) {
       metadata["smtp_verified"] = "true";
     }
 
@@ -255,34 +206,35 @@ async function emailPermutationSource(
   const lastName = context.accumulated.dirigeantLastName;
 
   if (!firstName || !lastName) {
-    // No dirigeant name → generic fallback
+    // No dirigeant name → generic fallback (strict: double SMTP only)
     const genericEmail = `contact@${domain}`;
-    const verification = await verifyEmail(genericEmail);
+    const verification = await verifyEmailSmtp(genericEmail);
 
-    if (verification.valid) {
+    if (verification.smtpVerified) {
       return {
         ...emptyResult,
         email: genericEmail,
         metadata: {
-          strategy: "generic_fallback",
-          smtp_verified: String(verification.smtpVerified),
+          strategy: "generic_fallback_strict",
+          smtp_verified: "true",
         },
       };
     }
 
+    // Not double-SMTP verified → reject
     return emptyResult;
   }
 
-  // Single DM permutation
+  // Single DM permutation (strict double SMTP)
   const result = await findEmailForPerson(firstName, lastName, domain);
 
   const metadata: Record<string, string> = {
-    strategy: "name_permutation",
+    strategy: "name_permutation_strict",
     dirigeant_first_name: firstName,
     dirigeant_last_name: lastName,
   };
 
-  if (result?.smtpVerified) {
+  if (result) {
     metadata["smtp_verified"] = "true";
   }
 

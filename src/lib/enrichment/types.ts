@@ -205,10 +205,10 @@ export const DEFAULT_SOURCES: EnrichmentSource[] = [
   { name: "schema_org",         priority: 2, enabled: true,  tier: "free" },
   { name: "deep_scrape",        priority: 3, enabled: true,  tier: "free" },
   { name: "sirene",             priority: 4, enabled: true,  tier: "fr_public" },
-  { name: "email_permutation",  priority: 5, enabled: true,  tier: "fr_public" },
-  { name: "google_dork",        priority: 6, enabled: true,  tier: "freemium" }, // Graceful no-op if GOOGLE_CSE env vars missing
-  { name: "linkedin_search",   priority: 7, enabled: true,  tier: "freemium" }, // Graceful no-op if Apollo/CSE env vars missing
-  { name: "kaspr",              priority: 8, enabled: true,  tier: "paid" },     // Requires KASPR_API_KEY env var
+  { name: "google_dork",        priority: 5, enabled: true,  tier: "freemium" }, // Moved up: finds emails + LinkedIn URLs
+  { name: "linkedin_search",    priority: 6, enabled: true,  tier: "freemium" }, // 4-strategy LinkedIn finder (CSE + direct + Google organic + Bing)
+  { name: "kaspr",              priority: 7, enabled: true,  tier: "freemium" }, // FREE unlimited — LinkedIn → verified email+phone
+  { name: "email_permutation",  priority: 8, enabled: true,  tier: "free" },    // LAST RESORT — strict SMTP-only
 ];
 
 export const DEFAULT_WATERFALL_CONFIG: WaterfallConfig = {
@@ -217,5 +217,5 @@ export const DEFAULT_WATERFALL_CONFIG: WaterfallConfig = {
   maxSources: 8,
   timeoutPerSource: 300_000, // 5 min per source — quality > speed
   useKaspr: true,
-  minScoreForPaid: 30,
+  minScoreForPaid: 0, // Kaspr is FREE — always try it regardless of lead score
 };

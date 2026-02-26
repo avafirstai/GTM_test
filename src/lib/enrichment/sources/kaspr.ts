@@ -1,15 +1,14 @@
 /**
- * Waterfall Source 8 — Kaspr API (LinkedIn → Email + Phone)
+ * Waterfall Source 7 — Kaspr API (LinkedIn → Email + Phone)
  *
- * Priority: 8 (LAST — most expensive, used as last resort)
- * Cost: PAID (1 credit per data point — work email, direct email, phone)
+ * Priority: 7 (after linkedin_search — uses LinkedIn URLs found by earlier sources)
+ * Cost: FREE (unlimited credits for user)
  * Purpose: Get verified professional email + phone from LinkedIn profile.
  *
  * Requires:
  *   - KASPR_API_KEY env var
- *   - LinkedIn URL of the dirigeant (from Apollo, Google dork, or context)
- *   - config.useKaspr = true (opt-in only)
- *   - lead.score >= config.minScoreForPaid
+ *   - LinkedIn URL of the dirigeant (from Google dork, linkedin_search, or context)
+ *   - config.useKaspr = true
  *
  * API: POST https://api.developers.kaspr.io/profile/linkedin
  * Auth: Raw API key in Authorization header (NOT Bearer)
@@ -164,8 +163,8 @@ function selectBestKasprEmail(
 /*  Source Function                                                     */
 /* ------------------------------------------------------------------ */
 
-/** Max DMs to call Kaspr for (paid credits — explicit cap) */
-const MAX_KASPR_DM_CALLS = 3;
+/** Max DMs to call Kaspr for (free unlimited — generous cap) */
+const MAX_KASPR_DM_CALLS = 5;
 
 async function kasprSource(
   lead: EnrichmentLeadInput,

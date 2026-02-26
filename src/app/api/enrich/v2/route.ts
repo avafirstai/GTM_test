@@ -59,7 +59,7 @@ export async function POST(request: Request) {
     ...DEFAULT_WATERFALL_CONFIG,
     stopOnConfidence: body.stopOnConfidence ?? 80,
     useKaspr: body.useKaspr ?? true,
-    minScoreForPaid: body.minScoreForPaid ?? 30,
+    minScoreForPaid: body.minScoreForPaid ?? 0,
   };
 
   // Override source enablement if specified

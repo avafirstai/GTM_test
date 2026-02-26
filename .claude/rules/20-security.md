@@ -11,6 +11,9 @@ INSTANTLY_BEARER=                   # Alias du token Bearer
 CALCOM_API_KEY=                     # Cal.com API v2
 NOTION_API_KEY=                     # Notion integration token
 NOTION_PIPELINE_DB=                 # Notion database ID (pipeline)
+KASPR_API_KEY=                      # Kaspr API key (LinkedIn → email, FREE unlimited)
+GOOGLE_CSE_API_KEY=                 # Google Custom Search Engine API key
+GOOGLE_CSE_CX=                      # Google Custom Search Engine ID
 ```
 
 ### Regles

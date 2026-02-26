@@ -380,13 +380,18 @@ export async function runWaterfall(
     // --- Early stop: confidence threshold reached ---
     const aggregateConfidence = computeAggregateConfidence(allResults);
     if (aggregateConfidence >= config.stopOnConfidence) {
-      // NEVER early-stop before ALL sources (including Kaspr) have had a chance.
-      // Quality > speed: Kaspr (source #8) provides verified personal emails
-      // that are far more valuable than early generic emails at 80% confidence.
-      const MIN_SOURCES_BEFORE_EARLY_STOP = 8;
-      if (sourcesTried.length < MIN_SOURCES_BEFORE_EARLY_STOP) {
+      // Only early-stop if Kaspr has already been tried or is not applicable.
+      // Kaspr (FREE, source #7) provides verified personal emails that are
+      // far more valuable than early generic emails at 80% confidence.
+      const kasprTried = sourcesTried.includes("kaspr");
+      const kasprNotApplicable = !config.useKaspr ||
+        (!context.accumulated.linkedinUrl &&
+         !context.accumulated.dirigeant &&
+         !context.accumulated.decisionMakers.some((dm) => dm.firstName && dm.lastName));
+
+      if (!kasprTried && !kasprNotApplicable) {
         console.log(
-          `[Waterfall] SKIP early-stop: confidence=${aggregateConfidence} but only ${sourcesTried.length}/${MIN_SOURCES_BEFORE_EARLY_STOP} sources tried (quality>speed)`,
+          `[Waterfall] SKIP early-stop: confidence=${aggregateConfidence} but Kaspr not yet tried (quality>speed)`,
         );
       } else {
         console.log(`[Waterfall] EARLY STOP confidence=${aggregateConfidence}>=${config.stopOnConfidence}`);

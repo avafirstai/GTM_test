@@ -15,7 +15,7 @@ const SOURCE_BASE_CONFIDENCE: Record<string, number> = {
   schema_org:         85,  // Structured data from official site — very reliable
   deep_scrape:        65,  // HTML regex — decent but can be noisy
   sirene:             90,  // Official French government registry
-  email_permutation:  50,  // Generated pattern — needs verification
+  email_permutation:  90,  // Double SMTP-verified only (eva + mailcheck)
   google_dork:        55,  // Indirect source — found via web search
   kaspr:              88,  // 500M+ contacts, cross-referenced
   linkedin_search:    40,  // Metadata source — finds LinkedIn URL for Kaspr
@@ -41,8 +41,8 @@ const BONUS_HAS_SIRET = 5;
 /** Bonus when we also found dirigeant name */
 const BONUS_HAS_DIRIGEANT = 5;
 
-/** Bonus for SMTP-verified email (50 base + 45 = 95 for email_permutation) */
-const BONUS_SMTP_VERIFIED = 45;
+/** Bonus for SMTP-verified email (90 base + 10 = 100 for email_permutation) */
+const BONUS_SMTP_VERIFIED = 10;
 
 /* ------------------------------------------------------------------ */
 /*  Main Scoring Function                                              */

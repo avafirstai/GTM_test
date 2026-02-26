@@ -1,15 +1,17 @@
 /**
- * Waterfall Source 6.5 — LinkedIn Profile Search
+ * Waterfall Source 6 — LinkedIn Profile Search (4 strategies)
  *
- * Priority: 6.5 (after Google Dork, before Kaspr)
- * Cost: FREE (uses Google CSE quota) or FREEMIUM (Apollo)
+ * Priority: 6 (after Google Dork, before Kaspr)
+ * Cost: FREEMIUM (uses Google CSE + LinkedIn direct + Google organic + Bing API)
  * Purpose: Find the LinkedIn URL of the company's dirigeant.
  *   This URL is critical for Kaspr (next step) which converts
  *   LinkedIn profiles into verified emails + phone numbers.
  *
- * Requires:
- *   - Dirigeant name from SIRENE or deep_scrape (accumulated context)
- *   - Google CSE API key OR Apollo API key
+ * 4 strategies tried in cascade (linkedin-finder.ts):
+ *   1. Google CSE dork (100/day quota)
+ *   2. LinkedIn direct check (free, unlimited)
+ *   3. Google organic scrape (free, rate-limited)
+ *   4. Bing Web Search API (1000/month free)
  *
  * Does NOT return email directly — its value is setting
  * context.accumulated.linkedinUrl for Kaspr to use.
@@ -30,8 +32,8 @@ import { findLinkedInUrl } from "./linkedin-finder";
 /*  Constants                                                          */
 /* ------------------------------------------------------------------ */
 
-/** Max DMs to search LinkedIn for (saves API quota) */
-const MAX_LINKEDIN_SEARCH_DMS = 2;
+/** Max DMs to search LinkedIn for (4 strategies now, can afford more) */
+const MAX_LINKEDIN_SEARCH_DMS = 3;
 
 /* ------------------------------------------------------------------ */
 /*  Source Function                                                     */
