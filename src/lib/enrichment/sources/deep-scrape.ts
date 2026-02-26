@@ -320,13 +320,28 @@ const GARBAGE_WORDS = new Set([
   "cette", "sont", "nous", "vous", "leur", "elle", "elles",
   "mais", "donc", "alors", "aussi", "bien", "tres", "plus", "moins",
   "city", "guide", "home", "green", "casa", "residence", "Bonaparte",
+  // --- Web / tech terms (never names) ---
+  "site", "web", "page", "mail", "email", "internet", "adresse", "nom",
+  "prenom", "formulaire", "blog", "forum", "boutique", "catalogue",
+  "espace", "portail", "plateforme", "application", "version", "mise",
+  "jour", "flux", "carte", "plan", "photo", "video", "image", "fichier",
+  // --- Legal / professional terms ---
+  "cabinet", "etude", "office", "bureau", "siege", "agences", "filiale",
+  "droit", "avocat", "avocats", "notaire", "notaires", "huissier",
+  "maitre", "expert", "conseil", "juridique", "judiciaire", "legal",
+  // --- Articles / determiners (catch "Les Cookies" etc.) ---
+  "les", "des", "une", "aux", "ces", "ses", "mes", "tes",
+  "mon", "ton", "son", "vos", "nos", "leurs",
   // --- Titles / roles (not names) ---
   "assistante", "assistant", "stagiaire", "comptable", "secretaire",
   "responsable", "collaborateur", "collaboratrice", "negociateur",
   "negociatrice", "conseiller", "conseillere", "charge", "chargee",
+  "directeur", "directrice", "gerant", "gerante", "president", "presidente",
+  "associe", "associee", "fondateur", "fondatrice", "avocat", "avocate",
   // --- Addresses / places ---
   "boulevard", "avenue", "rue", "place", "chemin", "impasse", "allee",
   "route", "passage", "square", "quai", "cours", "rond-point",
+  "cedex", "batiment", "etage", "porte", "numero", "lot", "zone",
   // --- Descriptors (not names) ---
   "contenu", "utilisateur", "utilisateurs",
   "informations", "information", "actualites", "actualite", "nouveautes",
