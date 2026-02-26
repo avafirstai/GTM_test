@@ -280,23 +280,82 @@ const DIRIGEANT_TITLE_REGEX =
 /** French name regex pattern — reused across strategies */
 const FRENCH_NAME_PATTERN = /[A-ZÀ-ÖÙ-Ü][a-zà-öù-ü]+(?:\s+[A-ZÀ-ÖÙ-Ü][a-zà-öù-ü]+){1,3}/;
 
-/** Common French non-name phrases to exclude */
-const NON_NAME_PHRASES = [
-  "notre equipe", "mentions legales", "tous droits", "politique de",
-  "conditions generales", "protection des", "a propos", "qui sommes",
-  "nos services", "nos produits", "nos clients", "notre histoire",
-  "en savoir", "lire la", "voir plus", "accueil contact",
-];
+/**
+ * Words that NEVER appear in real French first/last names.
+ * If ANY word in the candidate name matches → reject as garbage.
+ * Covers: UI elements, legal text, social media, business categories,
+ * navigation, departments, common French non-name words.
+ */
+const GARBAGE_WORDS = new Set([
+  // --- Navigation / UI elements ---
+  "precedent", "suivant", "voir", "plus", "moins", "accueil", "menu",
+  "fermer", "ouvrir", "retour", "haut", "bas", "page", "lien", "lire",
+  "cliquer", "cliquez", "telecharger", "envoyer", "valider", "annuler",
+  "rechercher", "filtrer", "trier", "afficher", "masquer", "partager",
+  "imprimer", "copier", "coller", "modifier", "supprimer", "ajouter",
+  "connexion", "inscription", "deconnexion", "panier", "commander",
+  // --- Social media ---
+  "facebook", "instagram", "twitter", "linkedin", "youtube", "tiktok",
+  "pinterest", "snapchat", "whatsapp", "telegram",
+  // --- Legal / RGPD ---
+  "donnees", "personnelles", "propriete", "intellectuelle", "mentions",
+  "legales", "conditions", "generales", "politique", "confidentialite",
+  "cookies", "rgpd", "cnil", "droits", "reserves", "copyright",
+  "numerique", "economie", "protection", "utilisation", "traitement",
+  // --- Business categories / real estate ---
+  "immobilier", "immobiliere", "agence", "maison", "appartement",
+  "terrain", "location", "vente", "achat", "louer", "estimer", "acheter",
+  "vendre", "estimation", "programme", "neuf", "ancien", "investissement",
+  "promotion", "construction", "renovation", "gestion", "syndic",
+  "copropriete", "patrimoine", "transaction", "mandat", "bien", "biens",
+  // --- Business generic ---
+  "entreprise", "societe", "groupe", "service", "services", "relation",
+  "clients", "client", "equipe", "notre", "votre", "contact", "accueil",
+  "reception", "standard", "secretariat", "administration", "commercial",
+  "technique", "support", "ressources", "humaines", "comptabilite",
+  "marketing", "communication", "informatique", "logistique", "qualite",
+  // --- Common French words (never in names) ---
+  "avec", "dans", "pour", "sans", "sous", "sur", "vers", "chez",
+  "entre", "comme", "tout", "tous", "toute", "toutes", "autre", "autres",
+  "cette", "sont", "nous", "vous", "leur", "elle", "elles",
+  "mais", "donc", "alors", "aussi", "bien", "tres", "plus", "moins",
+  "city", "guide", "home", "green", "casa", "residence", "Bonaparte",
+  // --- Descriptors (not names) ---
+  "contenu", "utilisateur", "utilisateurs", "responsable",
+  "informations", "information", "actualites", "actualite", "nouveautes",
+  "evenements", "evenement", "offres", "offre", "solutions", "solution",
+  "produits", "produit", "activites", "activite", "projets", "projet",
+  "references", "reference", "partenaires", "partenaire", "histoire",
+  "savoir", "faire", "propos",
+  // --- Company form suffixes ---
+  "sarl", "sas", "eurl", "sasu", "sci", "snc",
+]);
 
-/** Validate a candidate name: 2-4 words, reasonable length, not a common phrase */
+/** Validate a candidate name: must look like a real human name */
 function isValidCandidateName(name: string): boolean {
   const parts = name.split(/\s+/);
   if (parts.length < 2 || parts.length > 4) return false;
-  if (name.length > 50 || name.length < 5) return false;
-  const lower = name.toLowerCase()
+  if (name.length > 40 || name.length < 5) return false;
+
+  const normalized = name.toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
-  return !NON_NAME_PHRASES.some((phrase) => lower.includes(phrase));
+
+  // Check each word against the garbage set
+  const words = normalized.split(/\s+/);
+  for (const word of words) {
+    if (GARBAGE_WORDS.has(word)) return false;
+  }
+
+  // Every word must start with uppercase in the original (proper noun check)
+  for (const part of parts) {
+    if (!/^[A-ZÀ-ÖÙ-Ü]/.test(part)) return false;
+  }
+
+  // Reject if ALL words are uppercase (likely an acronym or title, not a name)
+  if (parts.every((p) => p === p.toUpperCase()) && parts.length <= 2) return false;
+
+  return true;
 }
 
 /** Max dirigeants to extract from HTML (avoid noise) */
