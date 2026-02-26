@@ -312,8 +312,14 @@ export async function runWaterfall(
     // Record duration
     result.durationMs = Date.now() - sourceStart;
 
-    // --- Universal SMTP verification for every email found ---
-    // Skip for sources that already do their own SMTP check (email_permutation)
+    // --- Email verification for every email found ---
+    // Verify via disify + mailcheck to detect disposable/invalid emails.
+    // IMPORTANT: We do NOT reject emails just because MX records aren't found.
+    // Many small French businesses (OVH, Gandi) have valid emails on domains
+    // where these services can't resolve MX records. We only reject:
+    //   1. Disposable/temporary emails (both services agree)
+    //   2. Invalid format (syntax check fails)
+    // Skip for sources that do their own verification (email_permutation)
     // and for metadata-only sources (dns_intel, linkedin_search)
     if (
       result.email &&
@@ -326,31 +332,36 @@ export async function runWaterfall(
         if (smtpResult.smtpVerified) {
           result.metadata["smtp_verified"] = "true";
         } else {
-          // NOT SMTP verified = not proven to exist → remove it
-          // This is strict but ensures 95%+ reliability
+          // Not fully verified but may still be valid — keep it
           result.metadata["smtp_unverified"] = "true";
-          console.log(
-            `[Waterfall] SMTP NOT VERIFIED source=${source.name} — removing unverified email`,
-          );
-          result.email = null;
         }
         if (smtpResult.disposable) {
           result.metadata["disposable_email"] = "true";
           result.email = null; // Never keep disposable emails
+          console.log(
+            `[Waterfall] DISPOSABLE email detected source=${source.name} — removing`,
+          );
+        }
+        if (!smtpResult.valid) {
+          result.metadata["invalid_format"] = "true";
+          result.email = null; // Invalid syntax — remove
+          console.log(
+            `[Waterfall] INVALID email format source=${source.name} — removing`,
+          );
         }
       } catch {
-        // SMTP check failed (API down, timeout) — keep email as-is
+        // Verification failed (API down, timeout) — keep email as-is
       }
     }
 
-    // Also verify DM emails found by this source — same strict rule
+    // Also verify DM emails — only reject disposable/invalid
     if (result.dirigeants && source.name !== "email_permutation") {
       for (const dm of result.dirigeants) {
         if (dm.email) {
           try {
             const dmSmtp = await verifyEmailSmtp(dm.email);
-            if (!dmSmtp.smtpVerified) {
-              dm.email = null; // Not SMTP verified → remove
+            if (dmSmtp.disposable || !dmSmtp.valid) {
+              dm.email = null; // Disposable or invalid format → remove
             }
           } catch {
             // Keep email as-is on verification failure

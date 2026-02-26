@@ -6,17 +6,18 @@
  * Purpose: Generate email candidates from dirigeant name + domain,
  *   then verify which ones actually exist via double SMTP check.
  *
- * STRICT POLICY: Only returns emails verified by BOTH disify.com
- * AND mailcheck.ai. If either service fails → email is REJECTED.
- * No guesses, no "syntax-only valid" emails. 100% verified or nothing.
+ * POLICY: Emails must pass format validation and not be disposable.
+ * Uses disify.com + mailcheck.ai for verification. Since these services
+ * don't do real SMTP RCPT TO, we accept valid-format + non-disposable
+ * emails as reliable enough for outreach to French businesses.
  *
  * Requires: Dirigeant name from SIRENE (Phase 4) + domain from lead
  *
  * Flow:
  *   1. Get dirigeant name from accumulated context (SIRENE gave us this)
  *   2. Generate 12 email permutations (prenom.nom@, p.nom@, etc.)
- *   3. Double-verify each via disify.com + mailcheck.ai
- *   4. Return ONLY the first double-verified email (strict mode)
+ *   3. Verify each via disify.com + mailcheck.ai (format + disposable check)
+ *   4. Return first valid, non-disposable email
  *
  * Confidence: 90 base (double SMTP-verified = very reliable)
  */
@@ -125,17 +126,29 @@ async function findEmailForPerson(
     toVerify.map((email) => verifyEmailSmtp(email)),
   );
 
-  // STRICT: Only return double-SMTP-verified emails. No syntax-only guesses.
+  // Accept email if: valid format + not disposable.
+  // Note: disify/mailcheck do NOT do real SMTP RCPT TO, so "smtpVerified"
+  // only means both services confirmed MX records exist. Many small French
+  // business domains (OVH, Gandi) pass format checks but fail MX lookups.
+  // We accept valid + non-disposable emails as reliable enough for outreach.
   for (const result of results) {
     if (result.status !== "fulfilled") continue;
-    const { email, smtpVerified, disposable } = result.value;
+    const { email, valid, smtpVerified, disposable } = result.value;
 
-    if (smtpVerified && !disposable) {
+    if (disposable) continue; // Never keep disposable emails
+
+    // Best case: both services confirm domain validity
+    if (smtpVerified) {
       return { email, smtpVerified: true };
+    }
+
+    // Acceptable: valid format, not disposable — keep first match
+    if (valid) {
+      return { email, smtpVerified: false };
     }
   }
 
-  // No double-verified email found → return null (strict policy)
+  // No valid email found
   return null;
 }
 
@@ -210,18 +223,18 @@ async function emailPermutationSource(
     const genericEmail = `contact@${domain}`;
     const verification = await verifyEmailSmtp(genericEmail);
 
-    if (verification.smtpVerified) {
+    if (verification.valid && !verification.disposable) {
       return {
         ...emptyResult,
         email: genericEmail,
         metadata: {
-          strategy: "generic_fallback_strict",
-          smtp_verified: "true",
+          strategy: "generic_fallback",
+          smtp_verified: String(verification.smtpVerified),
         },
       };
     }
 
-    // Not double-SMTP verified → reject
+    // Invalid format or disposable → reject
     return emptyResult;
   }
 
