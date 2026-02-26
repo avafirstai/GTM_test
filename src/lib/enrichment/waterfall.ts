@@ -312,63 +312,9 @@ export async function runWaterfall(
     // Record duration
     result.durationMs = Date.now() - sourceStart;
 
-    // --- Email verification for every email found ---
-    // Verify via disify + mailcheck to detect disposable/invalid emails.
-    // IMPORTANT: We do NOT reject emails just because MX records aren't found.
-    // Many small French businesses (OVH, Gandi) have valid emails on domains
-    // where these services can't resolve MX records. We only reject:
-    //   1. Disposable/temporary emails (both services agree)
-    //   2. Invalid format (syntax check fails)
-    // Skip for sources that do their own verification (email_permutation)
-    // and for metadata-only sources (dns_intel, linkedin_search)
-    if (
-      result.email &&
-      source.name !== "email_permutation" &&
-      source.name !== "dns_intel" &&
-      source.name !== "linkedin_search"
-    ) {
-      try {
-        const smtpResult = await verifyEmailSmtp(result.email);
-        if (smtpResult.smtpVerified) {
-          result.metadata["smtp_verified"] = "true";
-        } else {
-          // Not fully verified but may still be valid — keep it
-          result.metadata["smtp_unverified"] = "true";
-        }
-        if (smtpResult.disposable) {
-          result.metadata["disposable_email"] = "true";
-          result.email = null; // Never keep disposable emails
-          console.log(
-            `[Waterfall] DISPOSABLE email detected source=${source.name} — removing`,
-          );
-        }
-        if (!smtpResult.valid) {
-          result.metadata["invalid_format"] = "true";
-          result.email = null; // Invalid syntax — remove
-          console.log(
-            `[Waterfall] INVALID email format source=${source.name} — removing`,
-          );
-        }
-      } catch {
-        // Verification failed (API down, timeout) — keep email as-is
-      }
-    }
-
-    // Also verify DM emails — only reject disposable/invalid
-    if (result.dirigeants && source.name !== "email_permutation") {
-      for (const dm of result.dirigeants) {
-        if (dm.email) {
-          try {
-            const dmSmtp = await verifyEmailSmtp(dm.email);
-            if (dmSmtp.disposable || !dmSmtp.valid) {
-              dm.email = null; // Disposable or invalid format → remove
-            }
-          } catch {
-            // Keep email as-is on verification failure
-          }
-        }
-      }
-    }
+    // --- SMTP verification SKIPPED for speed mode ---
+    // TODO: re-enable when running smaller batches with Kaspr
+    // Saves ~2 API calls per email found (disify + mailcheck)
 
     // Compute confidence for this result
     result.confidence = computeConfidence(result, domain);
@@ -391,30 +337,14 @@ export async function runWaterfall(
     // --- Early stop: confidence threshold reached ---
     const aggregateConfidence = computeAggregateConfidence(allResults);
     if (aggregateConfidence >= config.stopOnConfidence) {
-      // CRITICAL: NEVER early-stop if we haven't found ANY email yet.
-      // High confidence with 0 emails is useless — keep going.
       const hasAnyEmail = context.accumulated.emails.length > 0;
-
       if (!hasAnyEmail) {
         console.log(
           `[Waterfall] SKIP early-stop: confidence=${aggregateConfidence} but NO EMAIL found yet — must continue`,
         );
       } else {
-        // Only early-stop if Kaspr has already been tried or is not applicable.
-        const kasprTried = sourcesTried.includes("kaspr");
-        const kasprNotApplicable = !config.useKaspr ||
-          (!context.accumulated.linkedinUrl &&
-           !context.accumulated.dirigeant &&
-           !context.accumulated.decisionMakers.some((dm) => dm.firstName && dm.lastName));
-
-        if (!kasprTried && !kasprNotApplicable) {
-          console.log(
-            `[Waterfall] SKIP early-stop: confidence=${aggregateConfidence} but Kaspr not yet tried (quality>speed)`,
-          );
-        } else {
-          console.log(`[Waterfall] EARLY STOP confidence=${aggregateConfidence}>=${config.stopOnConfidence}`);
-          break;
-        }
+        console.log(`[Waterfall] EARLY STOP confidence=${aggregateConfidence}>=${config.stopOnConfidence}`);
+        break;
       }
     }
   }

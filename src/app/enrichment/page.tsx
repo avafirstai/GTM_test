@@ -212,10 +212,10 @@ const DEFAULT_SOURCES: SourceToggle[] = [
   { name: "schema_org", label: "Schema.org / JSON-LD", tier: "free", description: "Donnees structurees du site web", enabled: true },
   { name: "deep_scrape", label: "Deep HTML Scraping", tier: "free", description: "Scrape 5+ pages (contact, about, mentions)", enabled: true },
   { name: "sirene", label: "SIRENE / INSEE", tier: "fr_public", description: "Registre officiel FR (SIRET, dirigeant)", enabled: true },
-  { name: "email_permutation", label: "Email Permutation", tier: "fr_public", description: "Genere prenom.nom@domain + verification", enabled: true },
-  { name: "google_dork", label: "Google Dorking", tier: "freemium", description: "Recherche Google CSE (100/jour gratuit)", enabled: true },
-  { name: "linkedin_search", label: "LinkedIn Search", tier: "freemium", description: "Trouve le profil LinkedIn du dirigeant (4 strategies)", enabled: true },
-  { name: "kaspr", label: "Kaspr (LinkedIn)", tier: "premium", description: "Email + tel via LinkedIn (illimite)", enabled: true },
+  { name: "email_permutation", label: "Email Permutation", tier: "fr_public", description: "Genere prenom.nom@domain + verification", enabled: false },
+  { name: "google_dork", label: "Google Dorking", tier: "freemium", description: "Recherche Google CSE (100/jour gratuit)", enabled: false },
+  { name: "linkedin_search", label: "LinkedIn Search", tier: "freemium", description: "Trouve le profil LinkedIn du dirigeant (4 strategies)", enabled: false },
+  { name: "kaspr", label: "Kaspr (LinkedIn)", tier: "premium", description: "Email + tel via LinkedIn (rate-limited 250/jour)", enabled: false },
 ];
 
 const TIER_CONFIG = {

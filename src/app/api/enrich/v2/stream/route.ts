@@ -20,8 +20,8 @@ export const maxDuration = 300; // 5 min for large batches
 /*  Constants                                                          */
 /* ------------------------------------------------------------------ */
 
-const BATCH_SIZE = 3;
-const LEAD_TIMEOUT_MS = 120_000; // 2 min per lead — skip if exceeded
+const BATCH_SIZE = 5;
+const LEAD_TIMEOUT_MS = 45_000; // 45s per lead — speed mode
 
 /* ------------------------------------------------------------------ */
 /*  Request body                                                       */
