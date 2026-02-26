@@ -1,11 +1,11 @@
 /**
- * Universal SMTP Email Verification — Double Check
+ * Universal Email Verification — Double Check
  *
  * Verifies any email address using TWO independent services:
- *   1. eva.pingutil.com (free, no auth, unlimited)
- *   2. mailcheck.ai (free, no auth, high reliability)
+ *   1. disify.com (free, no auth, syntax + DNS + disposable)
+ *   2. mailcheck.ai (free, no auth, MX + domain age + role account)
  *
- * STRICT POLICY: Both services must confirm SMTP validity.
+ * STRICT POLICY: Both services must confirm validity.
  * If only one confirms or either fails → smtpVerified = false.
  * This ensures near-100% reliability: no false positives.
  *
@@ -22,7 +22,7 @@ export interface SmtpVerifyResult {
   email: string;
   /** Basic syntax + DNS check passed */
   valid: boolean;
-  /** Full SMTP RCPT TO check passed by BOTH services (mailbox exists) */
+  /** Both verification services confirm this email's domain is valid */
   smtpVerified: boolean;
   /** Email is from a disposable/temporary domain */
   disposable: boolean;
@@ -40,22 +40,22 @@ export function clearVerifyCache(): void {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Service 1: eva.pingutil.com                                        */
+/*  Service 1: disify.com                                              */
 /* ------------------------------------------------------------------ */
 
-interface EvaResult {
-  smtpVerified: boolean;
+interface DisifyResult {
   valid: boolean;
+  dns: boolean;
   disposable: boolean;
 }
 
-async function verifyViaEva(email: string): Promise<EvaResult | null> {
+async function verifyViaDisify(email: string): Promise<DisifyResult | null> {
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
 
     const resp = await fetch(
-      `https://api.eva.pingutil.com/email?email=${encodeURIComponent(email)}`,
+      `https://www.disify.com/api/email/${encodeURIComponent(email)}`,
       {
         signal: controller.signal,
         headers: { Accept: "application/json" },
@@ -67,10 +67,11 @@ async function verifyViaEva(email: string): Promise<EvaResult | null> {
     if (!resp.ok) return null;
 
     const data = await resp.json();
+    // disify returns: { format: bool, domain: string, disposable: bool, dns: bool }
     return {
-      smtpVerified: data.data?.smtp_check === true,
-      valid: data.status === "valid" || data.data?.valid_syntax === true,
-      disposable: data.data?.disposable === true,
+      valid: data.format === true && data.dns === true,
+      dns: data.dns === true,
+      disposable: data.disposable === true,
     };
   } catch {
     return null;
@@ -82,9 +83,10 @@ async function verifyViaEva(email: string): Promise<EvaResult | null> {
 /* ------------------------------------------------------------------ */
 
 interface MailcheckResult {
-  smtpVerified: boolean;
   valid: boolean;
+  mx: boolean;
   disposable: boolean;
+  roleAccount: boolean;
 }
 
 async function verifyViaMailcheck(email: string): Promise<MailcheckResult | null> {
@@ -92,11 +94,17 @@ async function verifyViaMailcheck(email: string): Promise<MailcheckResult | null
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
 
+    const apiKey = process.env.MAILCHECK_API_KEY;
+    const headers: Record<string, string> = { Accept: "application/json" };
+    if (apiKey) {
+      headers["Authorization"] = `Bearer ${apiKey}`;
+    }
+
     const resp = await fetch(
       `https://api.mailcheck.ai/email/${encodeURIComponent(email)}`,
       {
         signal: controller.signal,
-        headers: { Accept: "application/json" },
+        headers,
       },
     );
 
@@ -105,14 +113,13 @@ async function verifyViaMailcheck(email: string): Promise<MailcheckResult | null
     if (!resp.ok) return null;
 
     const data = await resp.json();
-    // mailcheck.ai returns: { status: 200, email, mx: bool, disposable: bool, did_you_mean: ... }
-    // "mx" indicates the domain has MX records (mail server exists)
-    // "disposable" indicates throwaway email
-    // Status field in response body indicates overall validity
+    // mailcheck.ai returns: { status: 200, email, mx: bool, disposable: bool,
+    //   public_domain: bool, role_account: bool, spam: bool, ... }
     return {
-      smtpVerified: data.mx === true && data.disposable === false,
-      valid: data.status === 200 || data.mx === true,
+      valid: data.mx === true,
+      mx: data.mx === true,
       disposable: data.disposable === true,
+      roleAccount: data.role_account === true,
     };
   } catch {
     return null;
@@ -125,7 +132,7 @@ async function verifyViaMailcheck(email: string): Promise<MailcheckResult | null
 
 /**
  * Verify an email address using TWO services in parallel.
- * STRICT: Both must confirm SMTP validity for smtpVerified = true.
+ * STRICT: Both must confirm validity for smtpVerified = true.
  * Caches results to avoid duplicate checks within the same enrichment run.
  */
 export async function verifyEmailSmtp(email: string): Promise<SmtpVerifyResult> {
@@ -143,23 +150,23 @@ export async function verifyEmailSmtp(email: string): Promise<SmtpVerifyResult> 
   };
 
   // Run both services in parallel for speed
-  const [evaResult, mailcheckResult] = await Promise.allSettled([
-    verifyViaEva(lower),
+  const [disifyResult, mailcheckResult] = await Promise.allSettled([
+    verifyViaDisify(lower),
     verifyViaMailcheck(lower),
   ]);
 
-  const eva = evaResult.status === "fulfilled" ? evaResult.value : null;
+  const disify = disifyResult.status === "fulfilled" ? disifyResult.value : null;
   const mailcheck = mailcheckResult.status === "fulfilled" ? mailcheckResult.value : null;
 
   // STRICT DOUBLE CHECK: both must confirm
   // If one service is down → smtpVerified = false (strict policy)
-  const bothConfirm = eva?.smtpVerified === true && mailcheck?.smtpVerified === true;
+  const bothConfirm = disify?.valid === true && mailcheck?.valid === true;
 
   // Either service says valid syntax/DNS → we consider it syntactically valid
-  const eitherValid = eva?.valid === true || mailcheck?.valid === true;
+  const eitherValid = disify?.valid === true || mailcheck?.valid === true;
 
   // Either service flags disposable → we reject
-  const isDisposable = eva?.disposable === true || mailcheck?.disposable === true;
+  const isDisposable = disify?.disposable === true || mailcheck?.disposable === true;
 
   const result: SmtpVerifyResult = {
     email: lower,

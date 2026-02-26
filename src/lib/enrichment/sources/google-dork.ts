@@ -1,12 +1,11 @@
 /**
- * Waterfall Source 6 — Google Custom Search / Dorking
+ * Waterfall Source 5 — Brave Search / Web Dorking
  *
- * Priority: 6
- * Cost: FREEMIUM (100 queries/day free via Google Custom Search API)
- * Purpose: Find emails mentioned on external pages via Google search.
+ * Priority: 5
+ * Cost: FREE (Brave Search HTML scraping, no API key needed)
+ * Purpose: Find emails mentioned on external pages via web search.
  *   Query: "@domain.com" to find pages mentioning emails for this domain.
- *
- * Requires: GOOGLE_CSE_API_KEY + GOOGLE_CSE_CX env vars
+ *   Also searches for LinkedIn URLs for decision-makers.
  *
  * Confidence: 55 (indirect source — found via web search)
  */
@@ -18,26 +17,26 @@ import type {
   DecisionMakerData,
 } from "../types";
 import { registerSource } from "../waterfall";
-import { canQueryGoogleCSE, recordGoogleCSEQuery } from "../google-cse-quota";
+
+/* ------------------------------------------------------------------ */
+/*  Shared                                                             */
+/* ------------------------------------------------------------------ */
+
+const BROWSER_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
 /* ------------------------------------------------------------------ */
 
-interface GoogleSearchResult {
-  items?: Array<{
-    title: string;
-    link: string;
-    snippet: string;
-    pagemap?: Record<string, unknown>;
-  }>;
-  searchInformation?: {
-    totalResults: string;
-  };
+interface BraveSearchResult {
+  emails: string[];
+  linkedInUrls: string[];
+  pagesFound: number;
 }
 
 /* ------------------------------------------------------------------ */
-/*  Email Extraction from Snippets                                     */
+/*  Email Extraction from HTML                                         */
 /* ------------------------------------------------------------------ */
 
 const EMAIL_REGEX = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g;
@@ -46,9 +45,10 @@ const EXCLUDED_DOMAINS = new Set([
   "example.com", "sentry.io", "wixpress.com", "wordpress.org",
   "googleapis.com", "schema.org", "w3.org", "facebook.com",
   "twitter.com", "instagram.com", "youtube.com", "google.com",
+  "brave.com", "search.brave.com",
 ]);
 
-function extractEmailsFromText(text: string, leadDomain: string): string[] {
+function extractEmailsFromText(text: string): string[] {
   const matches = text.match(EMAIL_REGEX) || [];
   return matches
     .map((e) => e.toLowerCase())
@@ -56,57 +56,8 @@ function extractEmailsFromText(text: string, leadDomain: string): string[] {
       const domain = email.split("@")[1];
       if (!domain) return false;
       if (EXCLUDED_DOMAINS.has(domain)) return false;
-      // Prefer same-domain or at least not obviously wrong
       return true;
     });
-}
-
-/* ------------------------------------------------------------------ */
-/*  Google Custom Search API                                           */
-/* ------------------------------------------------------------------ */
-
-async function googleSearch(
-  query: string,
-  apiKey: string,
-  cx: string,
-): Promise<GoogleSearchResult | null> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
-
-  try {
-    const params = new URLSearchParams({
-      key: apiKey,
-      cx: cx,
-      q: query,
-      num: "5", // 5 results to save quota
-    });
-
-    const resp = await fetch(
-      `https://www.googleapis.com/customsearch/v1?${params.toString()}`,
-      {
-        signal: controller.signal,
-        headers: { Accept: "application/json" },
-      },
-    );
-
-    clearTimeout(timeout);
-
-    if (!resp.ok) {
-      // Rate limit or quota exceeded
-      if (resp.status === 429 || resp.status === 403) {
-        console.warn("[Google CSE] Quota exceeded or rate limited");
-      }
-      return null;
-    }
-
-    // Record successful query against quota
-    recordGoogleCSEQuery(1);
-
-    return await resp.json();
-  } catch {
-    clearTimeout(timeout);
-    return null;
-  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -114,7 +65,7 @@ async function googleSearch(
 /* ------------------------------------------------------------------ */
 
 const LINKEDIN_REGEX =
-  /https?:\/\/(?:www\.)?linkedin\.com\/in\/[a-zA-Z0-9\-_%]+\/?/gi;
+  /https?:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/in\/[a-zA-Z0-9\-_%]+\/?/gi;
 
 function extractLinkedInUrls(text: string): string[] {
   const matches = text.match(LINKEDIN_REGEX) || [];
@@ -122,19 +73,64 @@ function extractLinkedInUrls(text: string): string[] {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Brave Search (replaces Google CSE)                                 */
+/* ------------------------------------------------------------------ */
+
+async function braveSearch(query: string): Promise<BraveSearchResult> {
+  const result: BraveSearchResult = { emails: [], linkedInUrls: [], pagesFound: 0 };
+
+  const searchUrl = `https://search.brave.com/search?q=${encodeURIComponent(query)}&source=web`;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+
+  try {
+    const resp = await fetch(searchUrl, {
+      signal: controller.signal,
+      headers: {
+        "User-Agent": BROWSER_UA,
+        Accept: "text/html,application/xhtml+xml",
+        "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
+      },
+      redirect: "follow",
+    });
+
+    clearTimeout(timeout);
+
+    if (!resp.ok) return result;
+
+    const html = await resp.text();
+
+    // Check for CAPTCHA
+    if (html.includes("captcha") || html.includes("are you a robot")) {
+      console.warn("[Brave Search] Blocked by CAPTCHA");
+      return result;
+    }
+
+    // Extract data from the full HTML
+    result.pagesFound = 1; // We got a result page
+    result.emails = extractEmailsFromText(html);
+    result.linkedInUrls = extractLinkedInUrls(html);
+
+    return result;
+  } catch {
+    clearTimeout(timeout);
+    return result;
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /*  Source Function                                                     */
 /* ------------------------------------------------------------------ */
 
-/** Max DMs to search LinkedIn for via Google CSE (saves quota: 100/day) */
-const MAX_GOOGLE_DORK_DM_QUERIES = 2;
+/** Max DMs to search LinkedIn for via Brave Search */
+const MAX_BRAVE_DM_QUERIES = 3;
 
 async function googleDorkSource(
   lead: EnrichmentLeadInput,
   context: EnrichmentContext,
 ): Promise<EnrichmentResult> {
   const domain = context.domain;
-  const apiKey = process.env.GOOGLE_CSE_API_KEY;
-  const cx = process.env.GOOGLE_CSE_CX;
 
   const emptyResult: EnrichmentResult = {
     email: null,
@@ -146,103 +142,64 @@ async function googleDorkSource(
     metadata: {},
   };
 
-  // Skip if no API key configured
-  if (!apiKey || !cx) {
-    return {
-      ...emptyResult,
-      metadata: { error: "GOOGLE_CSE_API_KEY or GOOGLE_CSE_CX not configured" },
-    };
-  }
-
-  // Check quota before making any API calls
-  if (!canQueryGoogleCSE()) {
-    console.warn("[Google CSE] Skipping — daily quota exhausted");
-    return {
-      ...emptyResult,
-      metadata: { error: "google_cse_quota_exhausted" },
-    };
-  }
-
   const companyName = lead.name.replace(/\b(sarl|sas|sa|eurl|sasu)\b/gi, "").trim();
   const dms = context.accumulated.decisionMakers;
 
   // Multi-DM mode: search LinkedIn for top N DMs without a LinkedIn URL
   const dmsToSearch = dms
     .filter((dm) => !dm.linkedinUrl && dm.name.length > 0)
-    .slice(0, MAX_GOOGLE_DORK_DM_QUERIES);
+    .slice(0, MAX_BRAVE_DM_QUERIES);
 
   // Collect all results across queries
   const allEmails: string[] = [];
   const allLinkedInUrls: string[] = [];
-  let pagesFound = 0;
+  let totalPages = 0;
   const linkedInMatches: Array<{ dmName: string; url: string }> = [];
 
   if (dmsToSearch.length > 0) {
-    // Multi-DM: search LinkedIn for each DM (cap at MAX_GOOGLE_DORK_DM_QUERIES)
+    // Multi-DM: search LinkedIn for each DM
     const searchPromises = dmsToSearch.map((dm) =>
-      googleSearch(
+      braveSearch(
         `site:linkedin.com/in "${dm.name}" "${companyName}"`,
-        apiKey,
-        cx,
       ).then((result) => ({ dm, result })),
     );
 
     const searchResults = await Promise.allSettled(searchPromises);
 
     for (const settled of searchResults) {
-      if (settled.status !== "fulfilled" || !settled.value.result?.items) continue;
+      if (settled.status !== "fulfilled") continue;
       const { dm, result: searchResult } = settled.value;
-      const items = searchResult.items ?? [];
 
-      for (const item of items) {
-        pagesFound++;
-        const text = `${item.title} ${item.snippet} ${item.link}`;
+      totalPages += searchResult.pagesFound;
+      allEmails.push(...searchResult.emails);
+      allLinkedInUrls.push(...searchResult.linkedInUrls);
 
-        const emails = extractEmailsFromText(text, domain);
-        allEmails.push(...emails);
-
-        const linkedInUrls = extractLinkedInUrls(text);
-        allLinkedInUrls.push(...linkedInUrls);
-
-        // Assign first LinkedIn URL found to this DM
-        if (linkedInUrls.length > 0 && !dm.linkedinUrl) {
-          dm.linkedinUrl = linkedInUrls[0];
-          linkedInMatches.push({ dmName: dm.name, url: linkedInUrls[0] });
-        }
+      // Assign first LinkedIn URL found to this DM
+      if (searchResult.linkedInUrls.length > 0 && !dm.linkedinUrl) {
+        dm.linkedinUrl = searchResult.linkedInUrls[0];
+        linkedInMatches.push({ dmName: dm.name, url: searchResult.linkedInUrls[0] });
       }
     }
   } else if (context.accumulated.dirigeant) {
-    // Legacy: single dirigeant scalar (backward compat for sources not yet returning DMs)
-    const searchResult = await googleSearch(
+    // Legacy: single dirigeant scalar
+    const searchResult = await braveSearch(
       `site:linkedin.com/in "${context.accumulated.dirigeant}" "${companyName}"`,
-      apiKey,
-      cx,
     );
 
-    if (searchResult?.items) {
-      for (const item of searchResult.items) {
-        pagesFound++;
-        const text = `${item.title} ${item.snippet} ${item.link}`;
-        allEmails.push(...extractEmailsFromText(text, domain));
-        allLinkedInUrls.push(...extractLinkedInUrls(text));
-      }
-    }
+    totalPages += searchResult.pagesFound;
+    allEmails.push(...searchResult.emails);
+    allLinkedInUrls.push(...searchResult.linkedInUrls);
   } else {
     // No DMs, no dirigeant: fallback to email search
-    const searchResult = await googleSearch(`"@${domain}" email`, apiKey, cx);
+    const searchResult = await braveSearch(`"@${domain}" email`);
 
-    if (searchResult?.items) {
-      for (const item of searchResult.items) {
-        pagesFound++;
-        const text = `${item.title} ${item.snippet} ${item.link}`;
-        allEmails.push(...extractEmailsFromText(text, domain));
-        allLinkedInUrls.push(...extractLinkedInUrls(text));
-      }
-    }
+    totalPages += searchResult.pagesFound;
+    allEmails.push(...searchResult.emails);
+    allLinkedInUrls.push(...searchResult.linkedInUrls);
   }
 
   // If nothing found, early return
-  if (pagesFound === 0) return emptyResult;
+  if (totalPages === 0) return emptyResult;
 
   // Deduplicate
   const uniqueEmails = [...new Set(allEmails)];
@@ -254,9 +211,10 @@ async function googleDorkSource(
 
   // Build metadata
   const metadata: Record<string, string> = {
-    pages_found: String(pagesFound),
+    pages_found: String(totalPages),
     emails_found: String(uniqueEmails.length),
     dm_queries: String(dmsToSearch.length),
+    search_engine: "brave",
   };
 
   if (uniqueLinkedIn.length > 0) {

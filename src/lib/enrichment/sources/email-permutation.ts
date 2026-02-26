@@ -6,7 +6,7 @@
  * Purpose: Generate email candidates from dirigeant name + domain,
  *   then verify which ones actually exist via double SMTP check.
  *
- * STRICT POLICY: Only returns emails verified by BOTH eva.pingutil.com
+ * STRICT POLICY: Only returns emails verified by BOTH disify.com
  * AND mailcheck.ai. If either service fails → email is REJECTED.
  * No guesses, no "syntax-only valid" emails. 100% verified or nothing.
  *
@@ -15,8 +15,8 @@
  * Flow:
  *   1. Get dirigeant name from accumulated context (SIRENE gave us this)
  *   2. Generate 12 email permutations (prenom.nom@, p.nom@, etc.)
- *   3. Double-verify each via eva.pingutil.com + mailcheck.ai
- *   4. Return ONLY the first double-SMTP-verified email (strict mode)
+ *   3. Double-verify each via disify.com + mailcheck.ai
+ *   4. Return ONLY the first double-verified email (strict mode)
  *
  * Confidence: 90 base (double SMTP-verified = very reliable)
  */

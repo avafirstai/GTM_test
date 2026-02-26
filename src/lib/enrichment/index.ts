@@ -23,7 +23,6 @@ export { runWaterfall, runWaterfallBatch } from "./waterfall";
 export { computeConfidence, computeAggregateConfidence, selectBestEmail } from "./confidence";
 export { findLinkedInUrl } from "./sources/linkedin-finder";
 export { verifyEmailSmtp, verifyEmailsBatch, clearVerifyCache } from "./smtp-verify";
-export { getGoogleCSEQuotaStatus } from "./google-cse-quota";
 export type {
   EnrichmentResult,
   EnrichmentPipelineResult,

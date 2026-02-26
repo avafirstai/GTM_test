@@ -41,15 +41,15 @@ export async function GET() {
     },
     {
       name: "google_dork",
-      label: "Google Dorking",
-      configured: !!process.env.GOOGLE_CSE_API_KEY && !!process.env.GOOGLE_CSE_CX,
-      tier: "freemium" as const,
+      label: "Web Dorking (Brave Search)",
+      configured: true, // No API key needed — uses Brave Search HTML scraping
+      tier: "free" as const,
     },
     {
       name: "linkedin_search",
-      label: "LinkedIn Search",
-      configured: !!process.env.GOOGLE_CSE_API_KEY && !!process.env.GOOGLE_CSE_CX,
-      tier: "freemium" as const,
+      label: "LinkedIn Search (Brave)",
+      configured: true, // No API key needed — uses Brave Search HTML scraping
+      tier: "free" as const,
     },
     {
       name: "kaspr",

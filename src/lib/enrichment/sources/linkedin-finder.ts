@@ -4,15 +4,12 @@
  * Not a waterfall source itself, but used by linkedin-search.ts
  * to find LinkedIn profile URLs for decision-makers.
  *
- * 3-strategy cascade (tries in order, returns first success):
- *   1. Google CSE dork   — site:linkedin.com/in "name" "company" (100/day quota)
+ * 2-strategy cascade (tries in order, returns first success):
+ *   1. Brave Search      — scrape search.brave.com (free, unlimited, no API key)
  *   2. LinkedIn direct    — HEAD/GET linkedin.com/in/prenom-nom (free, unlimited)
- *   3. Google organic     — scrape Google search results (free, rate-limited)
  *
  * Used by: linkedin-search.ts → kaspr.ts (needs LinkedIn URL as input)
  */
-
-import { canQueryGoogleCSE, recordGoogleCSEQuery } from "../google-cse-quota";
 
 /* ------------------------------------------------------------------ */
 /*  Shared Helpers                                                     */
@@ -40,61 +37,77 @@ const LINKEDIN_IN_REGEX =
   /https?:\/\/(?:[a-z]{2,3}\.)?linkedin\.com\/in\/[a-zA-Z0-9\-_%]+\/?/gi;
 
 /* ------------------------------------------------------------------ */
-/*  Strategy 1: Google CSE Dork                                        */
+/*  Strategy 1: Brave Search (free, no API key, no quota)              */
 /* ------------------------------------------------------------------ */
 
-async function findViaGoogleCSE(
+/**
+ * Search Brave organically and extract LinkedIn URLs from the HTML.
+ * Brave Search renders results server-side (unlike Google which is JS-only).
+ * Returns the most relevant LinkedIn /in/ URL, or null.
+ */
+async function findViaBraveSearch(
   firstName: string,
   lastName: string,
   company: string,
 ): Promise<string | null> {
-  const apiKey = process.env.GOOGLE_CSE_API_KEY;
-  const cx = process.env.GOOGLE_CSE_CX;
-  if (!apiKey || !cx) return null;
-
-  if (!canQueryGoogleCSE()) {
-    console.warn("[LinkedIn Finder] Skipping Google CSE — daily quota exhausted");
-    return null;
-  }
-
   const query = `site:linkedin.com/in "${firstName} ${lastName}" "${company}"`;
+  const searchUrl = `https://search.brave.com/search?q=${encodeURIComponent(query)}&source=web`;
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
+  const timeout = setTimeout(() => controller.abort(), 10000);
 
   try {
-    const params = new URLSearchParams({
-      key: apiKey,
-      cx: cx,
-      q: query,
-      num: "3",
-    });
-
-    const resp = await fetch(
-      `https://www.googleapis.com/customsearch/v1?${params.toString()}`,
-      {
-        signal: controller.signal,
-        headers: { Accept: "application/json" },
+    const resp = await fetch(searchUrl, {
+      signal: controller.signal,
+      headers: {
+        "User-Agent": BROWSER_UA,
+        Accept: "text/html,application/xhtml+xml",
+        "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
       },
-    );
+      redirect: "follow",
+    });
 
     clearTimeout(timeout);
 
     if (!resp.ok) return null;
 
-    recordGoogleCSEQuery(1);
+    const html = await resp.text();
 
-    const data = await resp.json();
-    const items = data.items || [];
+    // Check for CAPTCHA / rate-limiting
+    if (html.includes("captcha") || html.includes("are you a robot")) {
+      console.warn("[LinkedIn Finder] Brave Search blocked by CAPTCHA");
+      return null;
+    }
 
-    for (const item of items) {
-      const link: string = item.link ?? "";
-      if (link.includes("linkedin.com/in/")) {
-        return link.replace(/\/$/, "");
+    // Extract all LinkedIn /in/ URLs from the page
+    const matches = html.match(LINKEDIN_IN_REGEX);
+    if (!matches || matches.length === 0) return null;
+
+    // Build target slug for relevance matching
+    const targetSlug = buildLinkedInSlug(firstName, lastName);
+
+    // Deduplicate and prefer URLs containing the target name
+    const seen = new Set<string>();
+    const candidates: string[] = [];
+
+    for (const match of matches) {
+      const cleaned = decodeURIComponent(match)
+        .replace(/\/$/, "")
+        .replace(/&amp;.*$/, "")
+        .toLowerCase();
+      if (seen.has(cleaned)) continue;
+      seen.add(cleaned);
+
+      if (cleaned.includes("/in/")) {
+        candidates.push(cleaned);
       }
     }
 
-    return null;
+    if (candidates.length === 0) return null;
+
+    // Prefer the URL that contains the person's name slug
+    const bestMatch = candidates.find((url) => url.includes(targetSlug));
+    return bestMatch ?? candidates[0];
   } catch {
     clearTimeout(timeout);
     return null;
@@ -170,84 +183,16 @@ async function findViaLinkedInDirect(
 }
 
 /* ------------------------------------------------------------------ */
-/*  Strategy 3: Google Organic Search                                  */
+/*  Main Finder Function — 2-Strategy Cascade                          */
 /* ------------------------------------------------------------------ */
 
 /**
- * Search Google organically (no API key) and extract LinkedIn URLs
- * from the search results HTML.
- *
- * Risk: Google may serve CAPTCHA or rate-limit. Fails gracefully.
- */
-async function findViaGoogleOrganic(
-  firstName: string,
-  lastName: string,
-  company: string,
-): Promise<string | null> {
-  const query = `"${firstName} ${lastName}" "${company}" site:linkedin.com/in`;
-  const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=5&hl=fr`;
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
-
-  try {
-    const resp = await fetch(searchUrl, {
-      signal: controller.signal,
-      headers: {
-        "User-Agent": BROWSER_UA,
-        Accept: "text/html,application/xhtml+xml",
-        "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
-      },
-      redirect: "follow",
-    });
-
-    clearTimeout(timeout);
-
-    if (!resp.ok) return null;
-
-    const html = await resp.text();
-
-    // Check for CAPTCHA / consent page
-    if (html.includes("captcha") || html.includes("consent.google.com")) {
-      console.warn("[LinkedIn Finder] Google organic blocked by CAPTCHA");
-      return null;
-    }
-
-    // Extract all LinkedIn /in/ URLs from the page
-    const matches = html.match(LINKEDIN_IN_REGEX);
-    if (!matches || matches.length === 0) return null;
-
-    // Deduplicate and return first valid /in/ URL
-    const seen = new Set<string>();
-    for (const match of matches) {
-      const cleaned = decodeURIComponent(match)
-        .replace(/\/$/, "")
-        .replace(/&amp;.*$/, "");
-      if (!seen.has(cleaned) && cleaned.includes("/in/")) {
-        return cleaned;
-      }
-      seen.add(cleaned);
-    }
-
-    return null;
-  } catch {
-    clearTimeout(timeout);
-    return null;
-  }
-}
-
-/* ------------------------------------------------------------------ */
-/*  Main Finder Function — 3-Strategy Cascade                          */
-/* ------------------------------------------------------------------ */
-
-/**
- * Find the LinkedIn URL for a person using 3 strategies in order.
+ * Find the LinkedIn URL for a person using 2 strategies in order.
  * Returns the first successful result, or null if all fail.
  *
  * Strategy order:
- *   1. Google CSE dork (reliable API, 100/day quota)
+ *   1. Brave Search (free, no API key, server-side HTML)
  *   2. LinkedIn direct check (free, checks if guessed URL is real)
- *   3. Google organic scrape (free, rate-limited by Google)
  */
 export async function findLinkedInUrl(
   firstName: string,
@@ -255,22 +200,16 @@ export async function findLinkedInUrl(
   company: string,
   _domain: string,
 ): Promise<{ url: string; strategy: string } | null> {
-  // Strategy 1: Google CSE dork (most reliable)
-  const cseUrl = await findViaGoogleCSE(firstName, lastName, company);
-  if (cseUrl) {
-    return { url: cseUrl, strategy: "google_cse" };
+  // Strategy 1: Brave Search (most reliable, no quota)
+  const braveUrl = await findViaBraveSearch(firstName, lastName, company);
+  if (braveUrl) {
+    return { url: braveUrl, strategy: "brave_search" };
   }
 
   // Strategy 2: LinkedIn direct check (free, no API quota)
   const directUrl = await findViaLinkedInDirect(firstName, lastName);
   if (directUrl) {
     return { url: directUrl, strategy: "linkedin_direct" };
-  }
-
-  // Strategy 3: Google organic search (free, may be rate-limited)
-  const organicUrl = await findViaGoogleOrganic(firstName, lastName, company);
-  if (organicUrl) {
-    return { url: organicUrl, strategy: "google_organic" };
   }
 
   return null;
