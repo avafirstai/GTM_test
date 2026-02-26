@@ -20,6 +20,7 @@ import type {
   EnrichmentResult,
   EnrichmentLeadInput,
   EnrichmentContext,
+  DecisionMakerData,
 } from "../types";
 import { registerSource } from "../waterfall";
 
@@ -269,6 +270,136 @@ function extractPhones(html: string): string[] {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Dirigeant Name Extraction from Team Pages                          */
+/* ------------------------------------------------------------------ */
+
+/** Titles that indicate a dirigeant / decision-maker in French */
+const DIRIGEANT_TITLE_REGEX =
+  /(?:g[ée]rant[e]?|fondateur|fondatrice|directeur|directrice|pr[ée]sident[e]?|CEO|PDG|DG|DGA|dirigeant[e]?|co-fondateur|co-fondatrice|co-g[ée]rant[e]?|managing\s+director|owner|propri[ée]taire|associ[ée][e]?|chef\s+d['']entreprise|responsable)/i;
+
+/** French name regex pattern — reused across strategies */
+const FRENCH_NAME_PATTERN = /[A-ZÀ-ÖÙ-Ü][a-zà-öù-ü]+(?:\s+[A-ZÀ-ÖÙ-Ü][a-zà-öù-ü]+){1,3}/;
+
+/** Common French non-name phrases to exclude */
+const NON_NAME_PHRASES = [
+  "notre equipe", "mentions legales", "tous droits", "politique de",
+  "conditions generales", "protection des", "a propos", "qui sommes",
+  "nos services", "nos produits", "nos clients", "notre histoire",
+  "en savoir", "lire la", "voir plus", "accueil contact",
+];
+
+/** Validate a candidate name: 2-4 words, reasonable length, not a common phrase */
+function isValidCandidateName(name: string): boolean {
+  const parts = name.split(/\s+/);
+  if (parts.length < 2 || parts.length > 4) return false;
+  if (name.length > 50 || name.length < 5) return false;
+  const lower = name.toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  return !NON_NAME_PHRASES.some((phrase) => lower.includes(phrase));
+}
+
+/** Max dirigeants to extract from HTML (avoid noise) */
+const MAX_HTML_DIRIGEANTS = 5;
+
+/**
+ * Extract ALL dirigeant names + titles from an HTML team page.
+ * Uses 3 strategies in order of reliability:
+ *   Strategy 0: HTML structure-aware (adjacent elements)
+ *   Strategy 1: Text-based "Name – Title" pattern
+ *   Strategy 2: Proximity search around title keywords
+ *
+ * Returns ALL matches (up to MAX_HTML_DIRIGEANTS), deduplicated by name.
+ */
+function extractAllDirigeantFromHtml(
+  html: string,
+): Array<{ name: string; title: string }> {
+  const results: Array<{ name: string; title: string }> = [];
+  const seenNames = new Set<string>();
+
+  /** Push a match if not already seen (deduplicate by normalized name) */
+  function addIfNew(name: string, title: string): void {
+    if (results.length >= MAX_HTML_DIRIGEANTS) return;
+    const norm = name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    if (seenNames.has(norm)) return;
+    seenNames.add(norm);
+    results.push({ name, title });
+  }
+
+  // --- Strategy 0: HTML structure-aware ---
+  // Many French sites structure teams as:
+  //   <h3>Jean Dupont</h3><p>Gérant</p>
+  //   <span class="name">Jean Dupont</span><span class="role">Fondateur</span>
+  // Look for pairs of adjacent HTML elements where one is a name and one is a title
+  const htmlPairRegex =
+    /<(?:h[1-6]|span|p|div|strong|b|em|li)[^>]*>\s*([^<]{3,50}?)\s*<\/(?:h[1-6]|span|p|div|strong|b|em|li)>\s*(?:<[^>]*>\s*)*<(?:h[1-6]|span|p|div|strong|b|em|li)[^>]*>\s*([^<]{3,80}?)\s*<\/(?:h[1-6]|span|p|div|strong|b|em|li)>/gi;
+
+  let match: RegExpExecArray | null;
+  while ((match = htmlPairRegex.exec(html)) !== null) {
+    const text1 = match[1].trim();
+    const text2 = match[2].trim();
+
+    // Check if text1 is name + text2 is title
+    if (FRENCH_NAME_PATTERN.test(text1) && DIRIGEANT_TITLE_REGEX.test(text2)) {
+      if (isValidCandidateName(text1)) {
+        addIfNew(text1, text2.trim());
+      }
+    }
+    // Check reverse: text1 is title + text2 is name
+    if (DIRIGEANT_TITLE_REGEX.test(text1) && FRENCH_NAME_PATTERN.test(text2)) {
+      if (isValidCandidateName(text2)) {
+        addIfNew(text2, text1.trim());
+      }
+    }
+  }
+
+  // --- Strategy 1: Text-based "Name – Title" pattern ---
+  // Match patterns like "Name – Title", "Name, Title", "Name | Title"
+  const nameNearTitleRegex =
+    /([A-ZÀ-ÖÙ-Ü][a-zà-öù-ü]+(?:\s+[A-ZÀ-ÖÙ-Ü][a-zà-öù-ü]+){1,3})\s*[,\-–—|:]\s*((?:g[ée]rant[e]?|fondateur|fondatrice|directeur|directrice|pr[ée]sident[e]?|CEO|PDG|DG|DGA|dirigeant[e]?|co-fondateur|co-fondatrice|co-g[ée]rant[e]?|managing\s+director|propri[ée]taire|associ[ée][e]?|chef\s+d['']entreprise)[a-zéè]*(?:\s+g[ée]n[ée]ral[e]?)?)/gi;
+
+  while ((match = nameNearTitleRegex.exec(html)) !== null) {
+    const name = match[1].trim();
+    const title = match[2].trim();
+    if (isValidCandidateName(name)) {
+      addIfNew(name, title);
+    }
+  }
+
+  // --- Strategy 2: Proximity search around title keywords ---
+  // Strip HTML tags first
+  const textOnly = html
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ");
+
+  // Search for ALL occurrences of title keywords
+  const globalTitleRegex = new RegExp(DIRIGEANT_TITLE_REGEX.source, "gi");
+  let titleMatch: RegExpExecArray | null;
+  while ((titleMatch = globalTitleRegex.exec(textOnly)) !== null) {
+    if (results.length >= MAX_HTML_DIRIGEANTS) break;
+    // Look 200 chars before and after the title keyword
+    const start = Math.max(0, titleMatch.index - 200);
+    const end = Math.min(textOnly.length, titleMatch.index + 200);
+    const ctx = textOnly.slice(start, end);
+
+    // Find a capitalized name near the title
+    const nameRegex = /([A-ZÀ-ÖÙ-Ü][a-zà-öù-ü]+(?:\s+[A-ZÀ-ÖÙ-Ü][a-zà-öù-ü]+){1,2})/g;
+    let nameMatch: RegExpExecArray | null;
+    while ((nameMatch = nameRegex.exec(ctx)) !== null) {
+      const candidateName = nameMatch[1].trim();
+      if (isValidCandidateName(candidateName)) {
+        addIfNew(candidateName, titleMatch[0]);
+        break; // One name per title occurrence to avoid noise
+      }
+    }
+  }
+
+  return results;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Email Ranking                                                      */
 /* ------------------------------------------------------------------ */
 
@@ -329,6 +460,10 @@ async function deepScrapeSource(
   let pagesScraped = 0;
   let foundSiret: string | null = null;
 
+  // Collect ALL dirigeants across ALL pages, deduplicated by normalized name
+  const allRawDirigeants: Array<{ name: string; title: string }> = [];
+  const seenDirigeantNames = new Set<string>();
+
   for (let i = 0; i < htmlResults.length; i++) {
     const result = htmlResults[i];
     if (result.status !== "fulfilled" || !result.value) continue;
@@ -342,11 +477,50 @@ async function deepScrapeSource(
     if (!foundSiret) {
       foundSiret = extractSiret(html);
     }
+
+    // Extract ALL dirigeants from each page (subpages first, homepage last)
+    // Skip homepage (i=0) — we try it as fallback below (less reliable, more noise)
+    if (i > 0) {
+      const pageDirigeants = extractAllDirigeantFromHtml(html);
+      for (const d of pageDirigeants) {
+        const norm = d.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        if (!seenDirigeantNames.has(norm)) {
+          seenDirigeantNames.add(norm);
+          allRawDirigeants.push(d);
+        }
+      }
+    }
   }
 
-  // NOTE: deep_scrape does NOT extract dirigeant names — too unreliable
-  // (extracts UI elements like "Précédent Suivant", "Données Personnelles").
-  // Dirigeant names come ONLY from SIRENE (official INSEE data).
+  // Fallback: check homepage for dirigeants if none found on subpages
+  if (allRawDirigeants.length === 0 && htmlResults[0]?.status === "fulfilled" && htmlResults[0].value) {
+    const homepageDirigeants = extractAllDirigeantFromHtml(htmlResults[0].value);
+    for (const d of homepageDirigeants) {
+      const norm = d.name.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      if (!seenDirigeantNames.has(norm)) {
+        seenDirigeantNames.add(norm);
+        allRawDirigeants.push(d);
+      }
+    }
+  }
+
+  // Convert raw dirigeants to DecisionMakerData[]
+  const dirigeants: DecisionMakerData[] = allRawDirigeants.map((d) => {
+    const parts = d.name.trim().split(/\s+/);
+    const firstName = parts[0] ?? "";
+    const lastName = parts.slice(1).join(" ");
+    return {
+      name: d.name,
+      firstName,
+      lastName,
+      title: d.title,
+      email: null,
+      phone: null,
+      linkedinUrl: null,
+      source: "deep_scrape",
+      confidence: 65,
+    };
+  });
 
   // Deduplicate
   const uniqueEmails = [...new Set(allEmails)];
@@ -368,6 +542,11 @@ async function deepScrapeSource(
     metadata["all_emails"] = uniqueEmails.slice(0, 5).join(", ");
   }
 
+  if (dirigeants.length > 0) {
+    metadata["dirigeant_title"] = allRawDirigeants[0].title;
+    metadata["dirigeants_found"] = String(dirigeants.length);
+  }
+
   if (foundSiret) {
     metadata["siret_source"] = "mentions_legales";
   }
@@ -375,11 +554,12 @@ async function deepScrapeSource(
   return {
     email: bestEmail,
     phone: bestPhone,
-    dirigeant: null, // Dirigeant names come ONLY from SIRENE
+    dirigeant: dirigeants[0]?.name ?? null, // Backward compat scalar
     siret: foundSiret,
     source: "deep_scrape",
     confidence: 0, // Will be set by computeConfidence
     metadata,
+    dirigeants, // Full array of all decision-makers found
   };
 }
 
