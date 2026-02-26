@@ -221,9 +221,21 @@ async function kasprSource(
   }
 
   // Multi-DM mode: call Kaspr for each DM without email
+  // PRIORITY: SIRENE dirigeants first (official INSEE data = reliable names)
+  // then other sources (deep_scrape names can be garbage)
+  const dmsWithoutEmail = context.accumulated.decisionMakers
+    .filter((dm) => !dm.email && dm.firstName && dm.lastName);
+
+  // Sort: sirene first, then by confidence descending
+  const dmsSorted = [...dmsWithoutEmail].sort((a, b) => {
+    const aIsSirene = a.source === "sirene" ? 0 : 1;
+    const bIsSirene = b.source === "sirene" ? 0 : 1;
+    if (aIsSirene !== bIsSirene) return aIsSirene - bIsSirene;
+    return (b.confidence ?? 0) - (a.confidence ?? 0);
+  });
+
   // Build LinkedIn URL guess from name when no URL found by prior sources
-  const dmsForKaspr = context.accumulated.decisionMakers
-    .filter((dm) => !dm.email)
+  const dmsForKaspr = dmsSorted
     .map((dm) => {
       if (dm.linkedinUrl) return dm;
       // Fallback: build LinkedIn URL from name

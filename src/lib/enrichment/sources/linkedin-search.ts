@@ -58,8 +58,15 @@ async function linkedinSearchSource(
     .trim();
 
   // Multi-DM mode: find LinkedIn for DMs that don't have one yet
-  const dmsWithoutLinkedIn = context.accumulated.decisionMakers
+  // PRIORITY: SIRENE dirigeants first (official INSEE data = reliable names)
+  const dmsWithoutLinkedIn = [...context.accumulated.decisionMakers]
     .filter((dm) => !dm.linkedinUrl && dm.firstName && dm.lastName)
+    .sort((a, b) => {
+      const aIsSirene = a.source === "sirene" ? 0 : 1;
+      const bIsSirene = b.source === "sirene" ? 0 : 1;
+      if (aIsSirene !== bIsSirene) return aIsSirene - bIsSirene;
+      return (b.confidence ?? 0) - (a.confidence ?? 0);
+    })
     .slice(0, MAX_LINKEDIN_SEARCH_DMS);
 
   if (dmsWithoutLinkedIn.length > 0) {
