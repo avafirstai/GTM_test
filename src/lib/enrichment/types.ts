@@ -215,7 +215,7 @@ export const DEFAULT_WATERFALL_CONFIG: WaterfallConfig = {
   sources: DEFAULT_SOURCES,
   stopOnConfidence: 80,
   maxSources: 8,
-  timeoutPerSource: 300_000, // 5 min per source — quality > speed
+  timeoutPerSource: 8_000, // 8s per source — must fit within Vercel 60s total (8 sources × 8s = 64s max)
   useKaspr: true,
   minScoreForPaid: 0, // Kaspr is FREE — always try it regardless of lead score
 };

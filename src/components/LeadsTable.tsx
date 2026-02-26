@@ -479,7 +479,7 @@ export function LeadsTable({ leads, initialFilters, campaignId, onSearchChange }
     setBulkAction("enriching");
     setBulkMessageType("success");
 
-    const CONCURRENCY = 10;
+    const CONCURRENCY = 3;
     const total = leadsToEnrich.length;
     let idx = 0;
     let done = 0;

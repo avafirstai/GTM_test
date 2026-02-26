@@ -7,7 +7,7 @@ import type { EnrichmentLeadInput } from "@/lib/enrichment";
 import { parseExistingDecisionMakers, mergeDecisionMakers } from "@/lib/enrichment/merge-utils";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 300; // 5 min per lead — quality > speed, guarantee full waterfall incl. Kaspr
+export const maxDuration = 60; // Vercel free tier = 60s max per serverless function
 
 /**
  * POST /api/enrich/v2/single — Waterfall enrichment for ONE lead

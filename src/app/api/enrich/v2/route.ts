@@ -14,7 +14,7 @@ import type {
 import { parseExistingDecisionMakers, mergeDecisionMakers } from "@/lib/enrichment/merge-utils";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 120; // Up to 120s for batch processing
+export const maxDuration = 60; // Vercel free tier = 60s max
 
 /**
  * POST /api/enrich/v2 — Waterfall enrichment engine (8 sources)

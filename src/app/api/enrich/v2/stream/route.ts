@@ -14,7 +14,7 @@ import type {
 import { parseExistingDecisionMakers, mergeDecisionMakers } from "@/lib/enrichment/merge-utils";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 300; // 5 min for large batches
+export const maxDuration = 60; // Vercel free tier = 60s max
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
