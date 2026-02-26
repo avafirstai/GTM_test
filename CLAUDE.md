@@ -1,369 +1,66 @@
 # AVA GTM — Machine de Guerre Go-To-Market
 
-> **Tu es l'architecte de la plus puissante machine GTM B2B jamais construite.**
-> **Zero budget. Zero intervention humaine. Revenue maximum.**
-> **Chaque decision est chirurgicale. Chaque action rapproche d'un client payant.**
-
----
+> Zero budget. Zero intervention humaine. Revenue maximum.
 
 ## Mission
-
-Plateforme GTM 100% autonome qui :
-1. **Scrape** des leads B2B depuis Google Maps (gratuit, )
-2. **Enrichit** chaque lead avec plusierus  email pro ()
-3. **Score** chaque lead (formule ponderee, 0-100)
-4. **Uploade** dans Instantly pour des campagnes email automatisees
-5. **Synchronise** avec Notion CRM pour pipeline tracking
-6. **Booke** des demos via Cal.com
-7. **Met a jour** le dashboard Supabase en temps reel
-8. **Se deploie** automatiquement via Vercel
-
-**Objectif final : 500 emails = 1 client payant a 199 EUR/mois MRR.**
-
-
-
-## Architecture
-
-```
-LEADS IN                                           REVENUE OUT
-   |                                                    ^
-   v                                                    |
- [SOURCING]    [ENRICHISSEMENT]    [OUTREACH]     [CONVERSION]
- Google Maps -> Email Scraper  -> Instantly    -> Cal.com
- Playwright     aiohttp+BS4      API v2          Booking
- Apify (done)   objectif 40%+    20 campagnes    Demo 7min
-   |                |                |               |
-   v                v                v               v
- [SUPABASE]   Table: gtm_leads (8,360 rows)
- PostgreSQL    Colonnes: name, city, phone, website, email,
-               category, rating, reviews, score, apify_run
-   |
-   v
- [DASHBOARD]   Next.js 15 + Vercel
- /api/stats    Supabase real-time, refresh 30s
-```
-
----
-
-## Tech Stack
-
-| Layer | Technology | Fichier |
-|-------|-----------|---------|
-| Frontend | Next.js 15 + React 19 + Tailwind 4 | `src/` |
-| Database | Supabase PostgreSQL | `src/lib/supabase.ts` |
-| API Stats | Next.js Route Handler | `src/app/api/stats/route.ts` |
-| Scraping Maps | Python 3 + Playwright | `scripts/google_maps_scraper.py` |
-| Email enrichment | Python 3 async (aiohttp + BS4) | `scripts/email_scraper.py` |
-| Upload campagne | Python 3 (Instantly API v2) | `scripts/instantly_uploader.py` |
-| Import Supabase | Python 3 (REST API) | `scripts/import_to_supabase.py` |
-| Dashboard stats | Python 3 (CSV -> TS generator) | `scripts/update_dashboard_data.py` |
-| Orchestration | Bash + cron | `scripts/run_pipeline.sh` |
-| Hosting | Vercel (auto-deploy on push main) | `vercel.json` |
-| CRM | Notion API | A connecter |
-| Booking | Cal.com API v2 | A connecter |
-| Cold Email | Instantly.ai API v2 | `src/lib/instantly.ts` |
-| Git | GitHub (avafirstai/GTM_test) | `.git` |
-
----
-
-## Structure du Repo
-
-```
-GTM_test/
-├── CLAUDE.md                    # CE FICHIER — master brain
-├── .claude/
-│   ├── rules/                   # Contraintes et regles absolues
-│   │   ├── 00-core.md           # Regles fondamentales
-│   │   ├── 10-anti-spam.md      # Anti-spam et deliverabilite
-│   │   ├── 20-security.md       # Secrets et securite
-│   │   └── 30-code-style.md     # Conventions de code
-│   ├── skills/                  # References API externes
-│   │   ├── instantly-api.md     # Instantly.ai API v2 reference
-│   │   ├── notion-api.md        # Notion API reference
-│   │   └── calcom-api.md        # Cal.com API v2 reference
-│   └── agents/                  # Sous-agents specialises
-│       ├── lead-scorer.md       # Scoring et qualification
-│       ├── email-writer.md      # Generation sequences email
-│       └── reply-handler.md     # Classification et reponse
-├── docs/
-│   ├── architecture/
-│   │   └── system-design.md     # Architecture technique detaillee
-│   ├── playbooks/
-│   │   ├── week-1-launch.md     # Playbook semaine 1
-│   │   ├── week-2-4-scaling.md  # Playbook semaines 2-4
-│   │   └── troubleshooting.md   # Guide de depannage
-│   └── api-references/
-│       └── instantly-v2.md      # Doc complete Instantly API v2
-├── ava-growth-machine/          # Playbooks GTM (29 fichiers)
-│   ├── CLAUDE.md                # Brain growth machine
-│   ├── README.md                # Setup guide + 30-day plan
-│   ├── 00-foundations/          # Positioning, objections, ROI
-│   ├── 10-icp/                  # ICPs par verticale (6)
-│   ├── 20-sourcing/             # Google Maps, signals
-│   ├── 30-outreach/             # Cold email, LinkedIn, WhatsApp
-│   ├── 40-demos/                # Script demo + case studies
-│   ├── 50-content/              # Content engine + LinkedIn posts
-│   ├── 60-analytics/            # KPIs et reporting
-│   ├── 70-partnerships/         # Programme partenaires
-│   ├── 80-crm/                  # Pipeline Notion
-│   └── 90-automation/           # n8n, prompts, scoring
-├── src/
-│   ├── app/
-│   │   ├── api/stats/route.ts   # API endpoint (Supabase live stats)
-│   │   ├── page.tsx             # Dashboard home (client component, 30s refresh)
-│   │   ├── campaigns/page.tsx   # Gestion campagnes email (server, data.ts)
-│   │   ├── enrichment/page.tsx  # Pipeline enrichissement (server, data.ts)
-│   │   ├── launch/page.tsx      # Lancement campagne (client, SIMULATION ONLY)
-│   │   ├── leads/page.tsx       # Base de leads (server, leads-data.ts)
-│   │   ├── scraping/page.tsx    # Status scraping Apify (server, data.ts)
-│   │   ├── settings/page.tsx    # Parametres / integrations (server, data.ts)
-│   │   ├── social/page.tsx      # Social media (PLACEHOLDER)
-│   │   └── verticales/page.tsx  # 14 verticales + scoring ROI (server, verticales.ts)
-│   ├── components/
-│   │   ├── Sidebar.tsx          # Navigation (USES data.ts = stale data)
-│   │   ├── StatCard.tsx         # Card metrique
-│   │   ├── Pipeline.tsx         # Pipeline funnel (BUG: division trompeuse)
-│   │   ├── EmailFunnel.tsx      # Funnel scrape->phone->web->email
-│   │   ├── CampaignTable.tsx    # Table campagnes
-│   │   ├── VerticaleChart.tsx   # Chart horizontal par verticale
-│   │   ├── GeoMap.tsx           # Carte des villes
-│   │   ├── ScoreDistribution.tsx # Distribution score + rating
-│   │   ├── ScrapingStatus.tsx   # Runs Apify (UNUSED imports)
-│   │   ├── EnrichmentProgress.tsx # Progress par verticale
-│   │   ├── LeadsTable.tsx       # Table leads complete (filtres, tri, expand)
-│   │   └── ActionItems.tsx      # Actions prioritaires (100% STATIQUE)
-│   └── lib/
-│       ├── supabase.ts          # Client Supabase (env vars)
-│       ├── instantly.ts         # Client Instantly API v2 (NO error handling)
-│       ├── verticales.ts        # 14 verticales + scoring formula
-│       ├── data.ts              # AUTO-GENERATED stats snapshot (STALE)
-│       └── leads-data.ts        # AUTO-GENERATED 500 leads (323KB! PERF ISSUE)
-├── scripts/
-│   ├── email_scraper.py         # Scraper emails (async, Supabase live update)
-│   ├── instantly_uploader.py    # Upload Instantly par verticale
-│   ├── google_maps_scraper.py   # Scraper Google Maps (Playwright)
-│   ├── import_to_supabase.py    # Import CSV dans Supabase (one-time)
-│   ├── update_dashboard_data.py # Genere data.ts + leads-data.ts depuis CSV
-│   ├── run_pipeline.sh          # Orchestrateur pipeline complet
-│   └── requirements.txt         # Dependencies Python
-└── vercel.json                  # Config Vercel
-```
-
-
-
-
-
-## Pipeline Autonome
-
-### Flux complet (run_pipeline.sh)
-```
-1. email_scraper.py         -> Visite sites, extrait emails
-2. instantly_uploader.py    -> Upload dans Instantly par verticale
-3. update_dashboard_data.py -> Genere data.ts + leads-data.ts (legacy)
-4. git push main            -> Vercel auto-deploy
-```
-
-### Cron (quotidien 6h)
-```bash
-0 6 * * * cd /path/to/GTM_test && ./scripts/run_pipeline.sh >> scripts/pipeline.log 2>&1
-```
-
+Plateforme GTM 100% autonome : Scrape (Google Maps) → Enrichit (emails) → Score (0-100) → Upload (Instantly) → Sync (Notion CRM) → Book (Cal.com) → Dashboard (Supabase + Vercel).
+**500 emails = 1 client payant a 199 EUR/mois MRR.**
 
 ## Produit AVA AI
+Receptionniste vocale IA 24/7. Pitch : "Ne perdez plus un seul client a cause d'un appel manque."
+Offre pilote : 14 jours gratuits, setup 24h, sans engagement.
 
-### Ce qu'on vend
-Receptionniste vocale IA 24/7 qui repond aux appels, qualifie les leads, et booke des RDV.
-
-### Pitch en 1 phrase
-> "Ne perdez plus un seul client a cause d'un appel manque."
-
-### Stats cles
-- 30-35% des appels sont manques par les PME
-- 75% des gens qui tombent sur messagerie ne rappellent JAMAIS
-- 850-3,000 EUR de revenue perdu par appel manque
-
-
-### Offre pilote
-14 jours gratuits. Setup en 24h. Pas d'engagement.
-
----
-
-## Credentials (JAMAIS dans le code)
-
-```bash
-# .env.local (gitignore)
-NEXT_PUBLIC_SUPABASE_URL=          # Supabase project URL
-NEXT_PUBLIC_SUPABASE_ANON_KEY=     # Supabase anon key (safe for browser)
-SUPABASE_URL=                      # Pour les scripts Python
-SUPABASE_ANON_KEY=                 # Pour les scripts Python
-INSTANTLY_API_KEY=                  # Instantly Bearer token
-INSTANTLY_BEARER=                   # Alias
-CALCOM_API_KEY=                     # Cal.com API v2
-NOTION_API_KEY=                     # Notion integration
-NOTION_PIPELINE_DB=                 # Notion database ID
+## Architecture
+```
+Google Maps → Email Scraper → Instantly → Cal.com
+  (Playwright)  (aiohttp+BS4)  (API v2)    (Booking)
+        ↓            ↓             ↓           ↓
+     [SUPABASE] Table: gtm_leads → [DASHBOARD] Next.js 15 + Vercel
 ```
 
----
+## Tech Stack
+- **Frontend** : Next.js 15 + React 19 + Tailwind 4 (`src/`)
+- **DB** : Supabase PostgreSQL (`src/lib/supabase.ts`)
+- **Scripts** : Python 3 (`scripts/`) — email_scraper, instantly_uploader, google_maps_scraper
+- **Hosting** : Vercel auto-deploy on push main
+- **Cold Email** : Instantly.ai API v2
+- **CRM** : Notion API (a connecter) | **Booking** : Cal.com API v2 (a connecter)
 
-## Convention de Code
+## Pipeline (run_pipeline.sh)
+```
+email_scraper.py → instantly_uploader.py → update_dashboard_data.py → git push main
+Cron: 0 6 * * *
+```
 
-### Python (scripts/)
-- Type hints sur toutes les fonctions
-- Docstrings sur les fonctions publiques
-- Gestion d'erreurs (try/except) autour de chaque requete HTTP
-- Credentials via `os.environ.get()` — JAMAIS hardcodees
-- JAMAIS de PII dans les logs
-- `ssl=True` par defaut (securite non-negotiable)
-
-### TypeScript (src/)
-- Strict mode (`strict: true` dans tsconfig.json)
-- Interfaces pour toutes les donnees
-- Server Components par defaut
-- Client Components avec `'use client'` uniquement si interactivite requise
-- Import paths avec `@/` alias
-- Pas de `any` — utiliser `unknown` + type guards
-- Pas de donnees massives en static (> 50KB = API route)
-
-### Git
-- Branche: `main` (production, auto-deploy)
-- Commits: `feat:`, `fix:`, `chore:` prefix
-- Commit message en anglais
-- SMALL DIFFS — un changement logique par commit
-
----
+## Credentials
+Tous dans `.env.local` (gitignore). Voir `.claude/rules/20-security.md` pour details.
 
 ## Regles Absolues
+1. GRATUIT (sauf Instantly gratuit) | 2. AUTONOME (cron) | 3. ANTI-SPAM (30/jour/inbox, warmup 2-3 sem)
+4. PAS DE PII DANS LES LOGS | 5. DASHBOARD LIVE (Supabase real-time) | 6. SECRETS EN .ENV
+7. SMALL DIFFS | 8. SCRAPING RESPECTUEUX | 9. SSL TOUJOURS ON | 10. BUNDLE LEAN (< 50KB)
 
-1. **GRATUIT** — Aucun outil payant sauf Instantly (plan gratuit).
-2. **AUTONOME** — Pipeline via cron. Zero intervention humaine.
-3. **ANTI-SPAM** — Max 30 emails/jour/inbox. Warmup 2-3 semaines. Domaines secondaires.
-4. **PAS DE PII DANS LES LOGS** — Emails/phones jamais dans les messages d'erreur.
-5. **DASHBOARD LIVE** — Supabase real-time prioritaire. Fichiers statiques = legacy a deprecer.
-6. **SECRETS EN .ENV** — `os.environ.get()` partout, `.env.local` dans `.gitignore`. ZERO credentials dans le code source.
-7. **SMALL DIFFS** — Un changement logique par commit.
-8. **SCRAPING RESPECTUEUX** — Timeouts, retries, rate-limiting. Pas de DDOS.
-9. **SSL TOUJOURS ON** — Jamais `ssl=False` en production.
-10. **BUNDLE LEAN** — Pas de fichiers > 50KB dans le bundle client JS. API routes pour les donnees volumineuses.
-
----
+Voir `.claude/rules/` pour details : 00-core, 10-anti-spam, 20-security, 30-code-style.
 
 ## URLs
-
-| Service | URL |
-|---------|-----|
-| Dashboard (prod) | https://gtm-test-ava-firsts-projects.vercel.app |
-| GitHub repo | https://github.com/avafirstai/GTM_test |
-| Instantly | https://app.instantly.ai |
-| Cal.com | https://cal.com/avafirstai/15min |
-| Notion Pipeline | (a configurer) |
+| Dashboard | https://gtm-test-ava-firsts-projects.vercel.app |
+|-----------|------------------------------------------------|
+| GitHub | https://github.com/avafirstai/GTM_test |
 | Supabase | https://supabase.com/dashboard/project/cifxffapwtksxhaphepv |
-| Vercel | https://vercel.com/ava-firsts-projects |
+| Cal.com | https://cal.com/avafirstai/15min |
 
----
+## Workflow : EXPLORE → PLAN → CODE → VERIFY
+1. **EXPLORE** : Lire fichiers impactes, identifier patterns, poser questions si doute
+2. **PLAN** : Objectif + fichiers + approche + risques → attendre "OK"
+3. **CODE** : Diffs minimaux, un commit par changement logique
+4. **VERIFY** : `export PATH="/opt/homebrew/bin:$PATH" && npm run build` doit passer
 
-## Quick Reference
+## MUST NOT
+- Features/refactors non demandes | `any` en TS | force-push sans confirmation
+- Code defensif pour scenarios impossibles | Abstractions one-shot | YAGNI
 
-### Lancer le pipeline
-```bash
-./scripts/run_pipeline.sh           # Full pipeline
-./scripts/run_pipeline.sh --test    # Test mode (20 leads)
-```
-
-### Installer les deps Python
-```bash
-pip install -r scripts/requirements.txt
-```
-
-### Dev local
-```bash
-npm run dev                         # Dashboard local :3000
-```
-
-### Verifier le build
-```bash
-npm run build                       # Doit passer clean
-```
-
----
-
-## Workflow Obligatoire (EXPLORE → PLAN → CODE → VERIFY)
-
-### Phase 1 : EXPLORE (ne PAS coder)
-- Lire les fichiers impactes et leurs dependances
-- Identifier les patterns existants
-- Verifier les tests existants
-- Si doute → poser 1-3 questions AVANT de continuer
-
-### Phase 2 : PLAN (ne PAS coder)
-- Objectif : ce qu'on fait (1 phrase)
-- Fichiers touches : liste exacte
-- Approche : strategie technique (2-4 phrases max)
-- Risques : ce qui pourrait casser
-- Verification : comment prouver que ca marche
-→ Attends le "OK" avant de coder.
-
-### Phase 3 : CODE
-- Diffs minimaux et chirurgicaux
-- Un changement logique = un commit
-- Suivre les patterns existants
-- Si choix non-trivial → expliquer en 1 ligne
-
-### Phase 4 : VERIFY
-1. Build : `export PATH="/opt/homebrew/bin:$PATH" && npm run build`
-2. Relire son propre diff
-3. Si un test echoue → corriger immediatement
-4. Ne jamais dire "c'est fait" sans verification
-
----
-
-## MUST / MUST NOT
-
-### MUST (toujours, sans exception)
-- Proposer un plan AVANT de coder
-- Lire les fichiers AVANT de les modifier
-- Faire des diffs minimaux — toucher uniquement ce qui est demande
-- Verifier la compilation apres chaque serie de changements
-- Expliquer le "pourquoi" de chaque decision architecturale
-
-### MUST NOT (jamais, sans exception)
-- Ajouter des features ou refactors non demandes
-- Ajouter du code defensif pour des scenarios impossibles
-- Creer des abstractions pour des operations one-shot
-- Supprimer des fichiers ou force-push sans confirmation
-- Designer pour des besoins futurs hypothetiques (YAGNI)
-- Desactiver un test qui echoue — corriger le code, pas le test
-- Utiliser `any` en TypeScript — jamais
-
----
-
-## Checklist Pre-Commit
-
-- [ ] Le code compile sans erreur
-- [ ] Le diff est minimal (pas de changements non lies)
-- [ ] Pas de console.log / debugger oublies
-- [ ] Pas de credentials en dur
-- [ ] Pas de fichiers temporaires
-- [ ] Le commit message est descriptif et conventionnel
-- [ ] Chaque ligne changee a une raison d'exister
-
----
-
-## Regles Critiques de Persistence (TOUJOURS verifier)
-
-### Enrichissement → DB
-Toute route qui enrichit un lead DOIT persister en DB :
-- **Succes** : `email` + `enrichment_status = "enriched"` + `enriched_at` + `enrichment_source`
-- **Echec** : `enrichment_status = "failed"` + `enrichment_attempts` incremente
-- **Skip** : `enrichment_status = "failed"` (pas de website, etc.)
-- JAMAIS ecrire `email` sans ecrire `enrichment_status` — sinon au refresh l'UI perd le statut
-
-### Donnees Supabase → Frontend
-- Les `id` de Supabase sont des **integers** (pas des strings) — toujours `String(id)` pour `localeCompare`
-- `api.email || ""` rend les emails vides falsy — c'est le comportement voulu
-- `cache: "no-store"` est obligatoire sur `/api/leads` pour voir les donnees fraiches
-- Le tri deterministe necessite `.order("id", { ascending: true })` comme tiebreaker en DB
-
-### UI → Feedback Immediat + Persistence
-- L'UI montre le resultat local (`enrichResults` state) immediatement apres enrichissement
-- Mais les donnees DOIVENT aussi etre en DB pour survivre au refresh
-- Les colonnes Email et Enrichi checkent `enrichResults[lead.id]` EN PLUS de `lead.email` / `lead.enrichment_status`
+## Regles de Persistence (CRITIQUES)
+- Enrichissement DB : email + enrichment_status toujours ensemble
+- Supabase IDs sont des integers → `String(id)` pour localeCompare
+- `cache: "no-store"` obligatoire sur `/api/leads`
+- UI : enrichResults state (immediat) + DB (survit au refresh)

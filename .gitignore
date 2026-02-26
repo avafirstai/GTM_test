@@ -19,5 +19,8 @@ scripts/_gen*.py
 scripts/_write*.py
 scripts/*.bak
 
+# Claude worktrees (session-specific, never commit)
+.claude/worktrees/
+
 # Old dashboard build artifacts
 ava-gtm-dashboard/
