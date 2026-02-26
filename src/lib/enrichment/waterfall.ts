@@ -391,22 +391,30 @@ export async function runWaterfall(
     // --- Early stop: confidence threshold reached ---
     const aggregateConfidence = computeAggregateConfidence(allResults);
     if (aggregateConfidence >= config.stopOnConfidence) {
-      // Only early-stop if Kaspr has already been tried or is not applicable.
-      // Kaspr (FREE, source #7) provides verified personal emails that are
-      // far more valuable than early generic emails at 80% confidence.
-      const kasprTried = sourcesTried.includes("kaspr");
-      const kasprNotApplicable = !config.useKaspr ||
-        (!context.accumulated.linkedinUrl &&
-         !context.accumulated.dirigeant &&
-         !context.accumulated.decisionMakers.some((dm) => dm.firstName && dm.lastName));
+      // CRITICAL: NEVER early-stop if we haven't found ANY email yet.
+      // High confidence with 0 emails is useless — keep going.
+      const hasAnyEmail = context.accumulated.emails.length > 0;
 
-      if (!kasprTried && !kasprNotApplicable) {
+      if (!hasAnyEmail) {
         console.log(
-          `[Waterfall] SKIP early-stop: confidence=${aggregateConfidence} but Kaspr not yet tried (quality>speed)`,
+          `[Waterfall] SKIP early-stop: confidence=${aggregateConfidence} but NO EMAIL found yet — must continue`,
         );
       } else {
-        console.log(`[Waterfall] EARLY STOP confidence=${aggregateConfidence}>=${config.stopOnConfidence}`);
-        break;
+        // Only early-stop if Kaspr has already been tried or is not applicable.
+        const kasprTried = sourcesTried.includes("kaspr");
+        const kasprNotApplicable = !config.useKaspr ||
+          (!context.accumulated.linkedinUrl &&
+           !context.accumulated.dirigeant &&
+           !context.accumulated.decisionMakers.some((dm) => dm.firstName && dm.lastName));
+
+        if (!kasprTried && !kasprNotApplicable) {
+          console.log(
+            `[Waterfall] SKIP early-stop: confidence=${aggregateConfidence} but Kaspr not yet tried (quality>speed)`,
+          );
+        } else {
+          console.log(`[Waterfall] EARLY STOP confidence=${aggregateConfidence}>=${config.stopOnConfidence}`);
+          break;
+        }
       }
     }
   }
