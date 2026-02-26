@@ -320,8 +320,15 @@ const GARBAGE_WORDS = new Set([
   "cette", "sont", "nous", "vous", "leur", "elle", "elles",
   "mais", "donc", "alors", "aussi", "bien", "tres", "plus", "moins",
   "city", "guide", "home", "green", "casa", "residence", "Bonaparte",
+  // --- Titles / roles (not names) ---
+  "assistante", "assistant", "stagiaire", "comptable", "secretaire",
+  "responsable", "collaborateur", "collaboratrice", "negociateur",
+  "negociatrice", "conseiller", "conseillere", "charge", "chargee",
+  // --- Addresses / places ---
+  "boulevard", "avenue", "rue", "place", "chemin", "impasse", "allee",
+  "route", "passage", "square", "quai", "cours", "rond-point",
   // --- Descriptors (not names) ---
-  "contenu", "utilisateur", "utilisateurs", "responsable",
+  "contenu", "utilisateur", "utilisateurs",
   "informations", "information", "actualites", "actualite", "nouveautes",
   "evenements", "evenement", "offres", "offre", "solutions", "solution",
   "produits", "produit", "activites", "activite", "projets", "projet",
