@@ -214,7 +214,8 @@ const DEFAULT_SOURCES: SourceToggle[] = [
   { name: "sirene", label: "SIRENE / INSEE", tier: "fr_public", description: "Registre officiel FR (SIRET, dirigeant)", enabled: true },
   { name: "email_permutation", label: "Email Permutation", tier: "fr_public", description: "Genere prenom.nom@domain + verification", enabled: true },
   { name: "google_dork", label: "Google Dorking", tier: "freemium", description: "Recherche Google CSE (100/jour gratuit)", enabled: true },
-  { name: "kaspr", label: "Kaspr (LinkedIn)", tier: "premium", description: "Email + tel via LinkedIn (illimite)", enabled: false },
+  { name: "linkedin_search", label: "LinkedIn Search", tier: "freemium", description: "Trouve le profil LinkedIn du dirigeant (4 strategies)", enabled: true },
+  { name: "kaspr", label: "Kaspr (LinkedIn)", tier: "premium", description: "Email + tel via LinkedIn (illimite)", enabled: true },
 ];
 
 const TIER_CONFIG = {
@@ -231,6 +232,7 @@ const SOURCE_ICONS: Record<string, React.ReactNode> = {
   sirene: <Building2 size={13} />,
   email_permutation: <Mail size={13} />,
   google_dork: <Search size={13} />,
+  linkedin_search: <Linkedin size={13} />,
   kaspr: <Linkedin size={13} />,
 };
 
